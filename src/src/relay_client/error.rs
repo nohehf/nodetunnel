@@ -1,5 +1,5 @@
-use thiserror::Error;
 use crate::transport::error::TransportError;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RelayClientError {

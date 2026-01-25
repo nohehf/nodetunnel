@@ -1,3 +1,3 @@
 pub mod client;
-pub mod events;
 mod error;
+pub mod events;

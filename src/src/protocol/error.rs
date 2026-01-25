@@ -18,5 +18,5 @@ pub enum ProtocolError {
     InvalidUtf8String(#[from] std::string::FromUtf8Error),
 
     #[error("Negative vector length")]
-    NegativeVectorLength()
+    NegativeVectorLength(),
 }

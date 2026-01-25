@@ -1,0 +1,12 @@
+{
+  // Enable format on save for Rust files using rustfmt
+  "[rust]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  },
+  // Configure rust-analyzer to use rustfmt
+  "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.checkOnSave.extraArgs": ["--", "-W", "clippy::all"],
+  "rust-analyzer.rustfmt.extraArgs": [],
+  "rust-analyzer.rustfmt.enableRangeFormatting": true
+}

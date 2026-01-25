@@ -1,6 +1,9 @@
-use crate::protocol::ids::*;
 use crate::protocol::error::ProtocolError;
-use crate::protocol::serialize::{push_bool, push_i32, push_string, push_u64, push_vec_room_info, read_bool, read_i32, read_string, read_u64, read_vec_room_info};
+use crate::protocol::ids::*;
+use crate::protocol::serialize::{
+    push_bool, push_i32, push_string, push_u64, push_vec_room_info, read_bool, read_i32,
+    read_string, read_u64, read_vec_room_info,
+};
 
 #[derive(Debug, Clone)]
 pub struct RoomInfo {
@@ -10,21 +13,55 @@ pub struct RoomInfo {
 
 #[derive(Debug, Clone)]
 pub enum PacketType {
-    Authenticate { app_id: String, version: String },
+    Authenticate {
+        app_id: String,
+        version: String,
+    },
     ClientAuthenticated,
-    CreateRoom { is_public: bool, metadata: String },
+    CreateRoom {
+        is_public: bool,
+        metadata: String,
+    },
     ReqRooms,
-    GetRooms { rooms: Vec<RoomInfo> },
-    UpdateRoom { room_id: String, metadata: String },
-    ReqJoin { room_id: String, metadata: String },
-    JoinRes { target_id: u64, room_id: String, allowed: bool },
-    ConnectedToRoom { room_id: String, peer_id: i32 },
-    PeerJoinAttempt { target_id: u64, metadata: String },
-    PeerJoinedRoom { peer_id: i32 },
-    PeerLeftRoom { peer_id: i32 },
-    GameData { from_peer: i32, data: Vec<u8> },
+    GetRooms {
+        rooms: Vec<RoomInfo>,
+    },
+    UpdateRoom {
+        room_id: String,
+        metadata: String,
+    },
+    ReqJoin {
+        room_id: String,
+        metadata: String,
+    },
+    JoinRes {
+        target_id: u64,
+        room_id: String,
+        allowed: bool,
+    },
+    ConnectedToRoom {
+        room_id: String,
+        peer_id: i32,
+    },
+    PeerJoinAttempt {
+        target_id: u64,
+        metadata: String,
+    },
+    PeerJoinedRoom {
+        peer_id: i32,
+    },
+    PeerLeftRoom {
+        peer_id: i32,
+    },
+    GameData {
+        from_peer: i32,
+        data: Vec<u8>,
+    },
     ForceDisconnect,
-    Error { error_code: i32, error_message: String }
+    Error {
+        error_code: i32,
+        error_message: String,
+    },
 }
 
 impl PacketType {
@@ -48,16 +85,15 @@ impl PacketType {
             CREATE_ROOM => {
                 let (is_public, r) = read_bool(rest)?;
                 let metadata = match read_string(r) {
-                    Ok((name, _)) => {
-                        name
-                    }
-                    Err(_) => {
-                        "".into()
-                    }
+                    Ok((name, _)) => name,
+                    Err(_) => "".into(),
                 };
 
-                PacketType::CreateRoom { is_public, metadata }
-            },
+                PacketType::CreateRoom {
+                    is_public,
+                    metadata,
+                }
+            }
 
             JOIN_ROOM => {
                 let (room_id, r) = read_string(rest)?;
@@ -74,7 +110,10 @@ impl PacketType {
             PEER_JOIN_ATTEMPT => {
                 let (target_id, r) = read_u64(rest)?;
                 let (metadata, _) = read_string(r)?;
-                PacketType::PeerJoinAttempt { target_id, metadata }
+                PacketType::PeerJoinAttempt {
+                    target_id,
+                    metadata,
+                }
             }
 
             PEER_JOINED => {
@@ -89,7 +128,10 @@ impl PacketType {
 
             GAME_DATA => {
                 let (peer_id, r) = read_i32(rest)?;
-                PacketType::GameData { from_peer: peer_id, data: r.to_vec() }
+                PacketType::GameData {
+                    from_peer: peer_id,
+                    data: r.to_vec(),
+                }
             }
 
             FORCE_DISCONNECT => PacketType::ForceDisconnect,
@@ -97,7 +139,10 @@ impl PacketType {
             ERROR_PACKET => {
                 let (error_code, r) = read_i32(rest)?;
                 let (error_message, _) = read_string(r)?;
-                PacketType::Error { error_code, error_message }
+                PacketType::Error {
+                    error_code,
+                    error_message,
+                }
             }
 
             REQ_ROOMS => PacketType::ReqRooms,
@@ -117,10 +162,14 @@ impl PacketType {
                 let (target_id, r) = read_u64(rest)?;
                 let (room_id, r) = read_string(r)?;
                 let (allowed, _) = read_bool(r)?;
-                PacketType::JoinRes { target_id, room_id, allowed }
+                PacketType::JoinRes {
+                    target_id,
+                    room_id,
+                    allowed,
+                }
             }
 
-            _ => return Err(ProtocolError::UnknownPacketType(packet_id))
+            _ => return Err(ProtocolError::UnknownPacketType(packet_id)),
         })
     }
 
@@ -138,7 +187,10 @@ impl PacketType {
                 buf.push(CLIENT_AUTHENTICATED);
             }
 
-            PacketType::CreateRoom { is_public, metadata } => {
+            PacketType::CreateRoom {
+                is_public,
+                metadata,
+            } => {
                 buf.push(CREATE_ROOM);
                 push_bool(&mut buf, *is_public);
                 push_string(&mut buf, metadata);
@@ -165,7 +217,11 @@ impl PacketType {
                 push_string(&mut buf, metadata);
             }
 
-            PacketType::JoinRes { target_id, room_id, allowed } => {
+            PacketType::JoinRes {
+                target_id,
+                room_id,
+                allowed,
+            } => {
                 buf.push(JOIN_RES);
                 push_u64(&mut buf, *target_id);
                 push_string(&mut buf, room_id);
@@ -178,7 +234,10 @@ impl PacketType {
                 push_i32(&mut buf, *peer_id);
             }
 
-            PacketType::PeerJoinAttempt { target_id, metadata } => {
+            PacketType::PeerJoinAttempt {
+                target_id,
+                metadata,
+            } => {
                 buf.push(PEER_JOIN_ATTEMPT);
                 push_u64(&mut buf, *target_id);
                 push_string(&mut buf, metadata);
@@ -194,7 +253,10 @@ impl PacketType {
                 push_i32(&mut buf, *peer_id);
             }
 
-            PacketType::GameData { from_peer: peer_id, data } => {
+            PacketType::GameData {
+                from_peer: peer_id,
+                data,
+            } => {
                 buf.push(GAME_DATA);
                 push_i32(&mut buf, *peer_id);
                 buf.extend(data);
@@ -204,7 +266,10 @@ impl PacketType {
                 buf.push(FORCE_DISCONNECT);
             }
 
-            PacketType::Error { error_code, error_message } => {
+            PacketType::Error {
+                error_code,
+                error_message,
+            } => {
                 buf.push(ERROR_PACKET);
                 push_i32(&mut buf, *error_code);
                 push_string(&mut buf, error_message);

@@ -8,9 +8,11 @@ pub fn read_bool(bytes: &[u8]) -> Result<(bool, &[u8]), ProtocolError> {
 
 pub fn read_i32(bytes: &[u8]) -> Result<(i32, &[u8]), ProtocolError> {
     if bytes.len() < 4 {
-        return Err(ProtocolError::NotEnoughBytes(
-            format!("for i32 (need {} bytes, have {})", 4, bytes.len())
-        ));
+        return Err(ProtocolError::NotEnoughBytes(format!(
+            "for i32 (need {} bytes, have {})",
+            4,
+            bytes.len()
+        )));
     }
     let value = i32::from_be_bytes(bytes[..4].try_into()?);
     Ok((value, &bytes[4..]))
@@ -18,9 +20,11 @@ pub fn read_i32(bytes: &[u8]) -> Result<(i32, &[u8]), ProtocolError> {
 
 pub fn read_u64(bytes: &[u8]) -> Result<(u64, &[u8]), ProtocolError> {
     if bytes.len() < 8 {
-        return Err(ProtocolError::NotEnoughBytes(
-            format!("for u64 (need {} bytes, have {})", 8, bytes.len())
-        ));
+        return Err(ProtocolError::NotEnoughBytes(format!(
+            "for u64 (need {} bytes, have {})",
+            8,
+            bytes.len()
+        )));
     }
 
     let value = u64::from_be_bytes(bytes[..8].try_into()?);
@@ -31,9 +35,11 @@ pub fn read_string(bytes: &[u8]) -> Result<(String, &[u8]), ProtocolError> {
     let (len, rest) = read_i32(bytes)?;
 
     if rest.len() < len as usize {
-        return Err(ProtocolError::NotEnoughBytes(
-            format!("for string (need {} bytes, have {})", len, rest.len())
-        ));
+        return Err(ProtocolError::NotEnoughBytes(format!(
+            "for string (need {} bytes, have {})",
+            len,
+            rest.len()
+        )));
     }
 
     let string_bytes = &rest[..len as usize];
@@ -56,7 +62,9 @@ pub fn push_i32(buf: &mut Vec<u8>, value: i32) {
     buf.extend(value.to_be_bytes());
 }
 
-pub fn push_u64(buf: &mut Vec<u8>, value: u64) { buf.extend(value.to_be_bytes()) }
+pub fn push_u64(buf: &mut Vec<u8>, value: u64) {
+    buf.extend(value.to_be_bytes())
+}
 
 pub fn read_room_info(bytes: &[u8]) -> Result<(RoomInfo, &[u8]), ProtocolError> {
     let (id, r) = read_string(bytes)?;

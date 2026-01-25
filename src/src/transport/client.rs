@@ -1,9 +1,9 @@
+use crate::transport::common::Channel;
+use paperudp::channel::DecodeResult;
+use paperudp::packet::PacketType;
 use std::io::ErrorKind;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
-use paperudp::channel::DecodeResult;
-use paperudp::packet::PacketType;
-use crate::transport::common::Channel;
 
 pub struct ClientTransport {
     socket: UdpSocket,
@@ -50,7 +50,9 @@ impl ClientTransport {
         loop {
             match self.socket.recv_from(&mut buf) {
                 Ok((len, _addr)) => {
-                    if len == 0 { continue; }
+                    if len == 0 {
+                        continue;
+                    }
                     let res = self.channel.decode(&buf[..len]);
 
                     match res {
@@ -62,7 +64,11 @@ impl ClientTransport {
                                 });
                             }
                         }
-                        DecodeResult::Reliable { payload, ack_packet, .. } => {
+                        DecodeResult::Reliable {
+                            payload,
+                            ack_packet,
+                            ..
+                        } => {
                             for p in payload {
                                 self.pending_events.push(ClientEvent::PacketReceived {
                                     data: p,
@@ -89,17 +95,11 @@ impl ClientTransport {
     pub fn send(&mut self, data: Vec<u8>, channel: Channel) -> Result<(), std::io::Error> {
         let packet = match channel {
             Channel::Reliable => {
-                let pkt = self.channel.encode(
-                    &data,
-                    PacketType::ReliableOrdered,
-                );
+                let pkt = self.channel.encode(&data, PacketType::ReliableOrdered);
                 pkt
             }
             Channel::Unreliable => {
-                let pkt = self.channel.encode(
-                    &data,
-                    PacketType::Unreliable,
-                );
+                let pkt = self.channel.encode(&data, PacketType::Unreliable);
                 pkt
             }
         };
@@ -144,10 +144,7 @@ impl ClientTransport {
 
     pub fn send_keepalive(&mut self) -> Result<(), std::io::Error> {
         let payload = vec![3u8];
-        let pkt = self.channel.encode(
-            &payload,
-            PacketType::Unreliable,
-        );
+        let pkt = self.channel.encode(&payload, PacketType::Unreliable);
         self.socket.send_to(&pkt, self.server_addr)?;
         Ok(())
     }

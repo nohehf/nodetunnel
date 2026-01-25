@@ -1,11 +1,11 @@
 use crate::protocol::packet::PacketType;
-use crate::relay_client::events::RelayEvent;
-use std::cmp::PartialEq;
-use std::time::Duration;
 use crate::protocol::version;
 use crate::relay_client::error::RelayClientError;
+use crate::relay_client::events::RelayEvent;
 use crate::transport::client::{ClientEvent, ClientTransport};
-use crate::transport::common::{Channel};
+use crate::transport::common::Channel;
+use std::cmp::PartialEq;
+use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
 enum ClientState {
@@ -35,9 +35,10 @@ impl RelayClient {
     }
 
     pub fn update(&mut self, delta: Duration) -> Result<Vec<RelayEvent>, RelayClientError> {
-        let transport = self.transport.as_mut().ok_or(
-            RelayClientError::TransportNotInitialized
-        )?;
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or(RelayClientError::TransportNotInitialized)?;
 
         self.last_update += delta;
         if self.last_update >= Duration::from_secs(5) {
@@ -72,7 +73,11 @@ impl RelayClient {
         None
     }
 
-    fn handle_packet(&mut self, data: Vec<u8>, channel: Channel) -> Result<Vec<RelayEvent>, RelayClientError> {
+    fn handle_packet(
+        &mut self,
+        data: Vec<u8>,
+        channel: Channel,
+    ) -> Result<Vec<RelayEvent>, RelayClientError> {
         let mut events = vec![];
 
         if let Ok(packet_type) = PacketType::from_bytes(&data) {
@@ -81,23 +86,38 @@ impl RelayClient {
                     self.client_state = ClientState::Authenticated;
                     events.push(RelayEvent::Authenticated);
                 }
-                PacketType::ConnectedToRoom { room_id, peer_id } =>
-                    events.push(RelayEvent::RoomJoined { room_id, peer_id }),
-                PacketType::GetRooms { rooms } =>
-                    events.push(RelayEvent::RoomsReceived { rooms }),
-                PacketType::PeerJoinAttempt { target_id, metadata } =>
-                    events.push(RelayEvent::PeerJoinAttempt { client_id: target_id, metadata } ),
-                PacketType::PeerJoinedRoom { peer_id } =>
-                    events.push(RelayEvent::PeerJoinedRoom { peer_id }),
-                PacketType::PeerLeftRoom { peer_id } =>
-                    events.push(RelayEvent::PeerLeftRoom { peer_id }),
-                PacketType::GameData { from_peer, data } => {
-                    events.push(RelayEvent::GameDataReceived { data, from_peer, channel });
+                PacketType::ConnectedToRoom { room_id, peer_id } => {
+                    events.push(RelayEvent::RoomJoined { room_id, peer_id })
                 }
-                PacketType::ForceDisconnect =>
-                    events.push(RelayEvent::ForceDisconnect),
-                PacketType::Error { error_code, error_message } =>
-                    events.push(RelayEvent::Error { error_code, error_message }),
+                PacketType::GetRooms { rooms } => events.push(RelayEvent::RoomsReceived { rooms }),
+                PacketType::PeerJoinAttempt {
+                    target_id,
+                    metadata,
+                } => events.push(RelayEvent::PeerJoinAttempt {
+                    client_id: target_id,
+                    metadata,
+                }),
+                PacketType::PeerJoinedRoom { peer_id } => {
+                    events.push(RelayEvent::PeerJoinedRoom { peer_id })
+                }
+                PacketType::PeerLeftRoom { peer_id } => {
+                    events.push(RelayEvent::PeerLeftRoom { peer_id })
+                }
+                PacketType::GameData { from_peer, data } => {
+                    events.push(RelayEvent::GameDataReceived {
+                        data,
+                        from_peer,
+                        channel,
+                    });
+                }
+                PacketType::ForceDisconnect => events.push(RelayEvent::ForceDisconnect),
+                PacketType::Error {
+                    error_code,
+                    error_message,
+                } => events.push(RelayEvent::Error {
+                    error_code,
+                    error_message,
+                }),
                 _ => {
                     return Err(RelayClientError::InvalidPacketType);
                 }
@@ -113,86 +133,114 @@ impl RelayClient {
         self.send_packet(
             PacketType::Authenticate {
                 app_id,
-                version: version::PROTOCOL_VERSION.to_string()
+                version: version::PROTOCOL_VERSION.to_string(),
             },
-            Channel::Reliable
+            Channel::Reliable,
         )?;
 
         Ok(())
     }
 
-    pub fn req_create_room(&mut self, is_public: bool, metadata: String) -> Result<(), RelayClientError> {
+    pub fn req_create_room(
+        &mut self,
+        is_public: bool,
+        metadata: String,
+    ) -> Result<(), RelayClientError> {
         self.send_packet(
             PacketType::CreateRoom {
                 is_public,
                 metadata,
             },
-            Channel::Reliable
+            Channel::Reliable,
         )?;
 
         Ok(())
     }
 
     pub fn req_rooms(&mut self) -> Result<(), RelayClientError> {
+        self.send_packet(PacketType::ReqRooms, Channel::Reliable)
+    }
+
+    pub fn req_join_room(
+        &mut self,
+        room_id: String,
+        metadata: String,
+    ) -> Result<(), RelayClientError> {
+        self.send_packet(PacketType::ReqJoin { room_id, metadata }, Channel::Reliable)?;
+
+        Ok(())
+    }
+
+    pub fn req_update_room(
+        &mut self,
+        room_id: &str,
+        metadata: &str,
+    ) -> Result<(), RelayClientError> {
         self.send_packet(
-            PacketType::ReqRooms,
+            PacketType::UpdateRoom {
+                room_id: room_id.to_string(),
+                metadata: metadata.to_string(),
+            },
             Channel::Reliable,
-        )
-    }
-
-    pub fn req_join_room(&mut self, room_id: String, metadata: String) -> Result<(), RelayClientError> {
-        self.send_packet(
-            PacketType::ReqJoin { room_id, metadata },
-            Channel::Reliable
         )?;
 
         Ok(())
     }
 
-    pub fn req_update_room(&mut self, room_id: &str, metadata: &str) -> Result<(), RelayClientError> {
-        self.send_packet(
-            PacketType::UpdateRoom { room_id: room_id.to_string(), metadata: metadata.to_string() },
-            Channel::Reliable
-        )?;
-
-        Ok(())
-    }
-
-    pub fn send_join_response(&mut self, room_id: String, target_id: u64, allowed: bool) -> Result<(), RelayClientError> {
+    pub fn send_join_response(
+        &mut self,
+        room_id: String,
+        target_id: u64,
+        allowed: bool,
+    ) -> Result<(), RelayClientError> {
         self.send_packet(
             PacketType::JoinRes {
                 allowed,
                 room_id,
-                target_id
+                target_id,
             },
-            Channel::Reliable
+            Channel::Reliable,
         )?;
 
         Ok(())
     }
 
-    pub fn send_game_data(&mut self, peer_id: i32, data: Vec<u8>, channel: Channel) -> Result<(), RelayClientError> {
+    pub fn send_game_data(
+        &mut self,
+        peer_id: i32,
+        data: Vec<u8>,
+        channel: Channel,
+    ) -> Result<(), RelayClientError> {
         self.send_packet(
-            PacketType::GameData { from_peer: peer_id, data },
-            channel
+            PacketType::GameData {
+                from_peer: peer_id,
+                data,
+            },
+            channel,
         )?;
 
         Ok(())
     }
 
     pub fn is_connected(&self) -> bool {
-        self.transport.as_ref().map_or(false, |transport| transport.is_connected())
+        self.transport
+            .as_ref()
+            .map_or(false, |transport| transport.is_connected())
     }
 
-    fn send_packet(&mut self, packet_type: PacketType, channel: Channel) -> Result<(), RelayClientError> {
-        let transport = self.transport.as_mut().ok_or(
-            RelayClientError::TransportNotInitialized
-        )?;
+    fn send_packet(
+        &mut self,
+        packet_type: PacketType,
+        channel: Channel,
+    ) -> Result<(), RelayClientError> {
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or(RelayClientError::TransportNotInitialized)?;
 
-        transport.send(
-            packet_type.to_bytes(),
-            channel,
-        ).expect("TODO: panic message");
+        transport
+            .send(packet_type.to_bytes(), channel)
+            .expect("TODO: panic message");
 
         Ok(())
     }

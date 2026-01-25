@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      
+      - name: Format code
+        run: cargo fmt
+        working-directory: src
+      
+      - name: Commit formatting changes
+        run: |
+          if [ -n "$(git diff --name-only)" ]; then
+            git add -A
+            git commit -m "ci: apply cargo fmt fixes"
+            git push
+          else
+            echo "No formatting changes needed"
+          fi
+
+  lint:
+    name: Lint and Auto-fix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Configure Git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            src/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Build dependencies
+        run: cargo build --all-targets
+        working-directory: src
+      
+      - name: Run Clippy with auto-fixes
+        run: cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -W clippy::all -W clippy::pedantic
+        working-directory: src
+        continue-on-error: true
+      
+      - name: Commit Clippy auto-fixes
+        run: |
+          if [ -n "$(git diff --name-only)" ]; then
+            git add -A
+            git commit -m "ci: apply clippy auto-fixes"
+            git push
+          else
+            echo "No clippy auto-fixes needed"
+          fi
+      
+      - name: Check for remaining lint issues
+        run: cargo clippy --all-targets -- -W clippy::all -W clippy::pedantic
+        working-directory: src
