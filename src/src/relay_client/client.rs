@@ -2,8 +2,8 @@ use crate::protocol::packet::PacketType;
 use crate::protocol::version;
 use crate::relay_client::error::RelayClientError;
 use crate::relay_client::events::RelayEvent;
-use crate::transport::client::{ClientEvent, ClientTransport};
 use crate::transport::common::Channel;
+use crate::transport::client::{ClientEvent, ClientTransport};
 use std::cmp::PartialEq;
 use std::time::Duration;
 
@@ -14,13 +14,13 @@ enum ClientState {
     Authenticated,
 }
 
-pub struct RelayClient {
-    transport: Option<ClientTransport>,
+pub struct RelayClient<T: ClientTransport> {
+    transport: Option<T>,
     client_state: ClientState,
     last_update: Duration,
 }
 
-impl RelayClient {
+impl<T: ClientTransport> RelayClient<T> {
     pub fn new() -> Self {
         Self {
             transport: None,
@@ -29,7 +29,7 @@ impl RelayClient {
         }
     }
 
-    pub fn connect(&mut self, transport: ClientTransport) {
+    pub fn connect(&mut self, transport: T) {
         self.client_state = ClientState::Connecting;
         self.transport = Some(transport);
     }
@@ -46,7 +46,7 @@ impl RelayClient {
             self.last_update = Duration::ZERO;
         }
 
-        let events = transport.recv_packets();
+        let events = transport.recv().map_err(RelayClientError::TransportError)?;
 
         let mut relay_events = vec![];
 
@@ -54,11 +54,9 @@ impl RelayClient {
             relay_events.push(event);
         }
 
-        for event in events {
-            if let ClientEvent::PacketReceived { data, channel } = event {
-                let packet_events = self.handle_packet(data, channel)?;
-                relay_events.extend(packet_events);
-            }
+        for ClientEvent::PacketReceived { data, channel } in events {
+            let packet_events = self.handle_packet(data, channel)?;
+            relay_events.extend(packet_events);
         }
 
         Ok(relay_events)
@@ -225,7 +223,7 @@ impl RelayClient {
     pub fn is_connected(&self) -> bool {
         self.transport
             .as_ref()
-            .map_or(false, |transport| transport.is_connected())
+            .is_some_and(|transport| transport.is_connected())
     }
 
     fn send_packet(
@@ -240,7 +238,7 @@ impl RelayClient {
 
         transport
             .send(packet_type.to_bytes(), channel)
-            .expect("TODO: panic message");
+            .map_err(RelayClientError::TransportError)?;
 
         Ok(())
     }

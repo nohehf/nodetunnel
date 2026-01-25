@@ -1,7 +1,7 @@
 use crate::relay_client::client::RelayClient;
 use crate::relay_client::events::RelayEvent;
-use crate::transport::client::ClientTransport;
 use crate::transport::common::Channel;
+use crate::transport::udp::UDPClientTransport;
 use godot::builtin::{Array, Callable, Dictionary, GString, PackedByteArray, Variant};
 use godot::classes::multiplayer_peer::{ConnectionStatus, TransferMode};
 use godot::classes::{IMultiplayerPeerExtension, MultiplayerPeerExtension};
@@ -9,8 +9,7 @@ use godot::global::{Error, godot_error, godot_warn};
 use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::prelude::{GodotClass, godot_api};
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::str::FromStr;
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
 struct GamePacket {
@@ -32,7 +31,7 @@ struct NodeTunnelPeer {
     target_peer: i32,
     transfer_mode: TransferMode,
     incoming_packets: Vec<GamePacket>,
-    relay_client: RelayClient,
+    relay_client: RelayClient<UDPClientTransport>,
     outgoing_queue: Vec<(i32, Vec<u8>, Channel)>,
     last_poll_time: Option<Instant>,
     base: Base<MultiplayerPeerExtension>,
@@ -67,7 +66,7 @@ impl NodeTunnelPeer {
                         "[NodeTunnel] DNS lookup returned no addresses: {}",
                         relay_address
                     );
-                    return Error::from(Error::ERR_CANT_CONNECT);
+                    return Error::ERR_CANT_CONNECT;
                 }
             },
             Err(e) => {
@@ -76,15 +75,15 @@ impl NodeTunnelPeer {
                     relay_address,
                     e
                 );
-                return Error::from(Error::ERR_CANT_CONNECT);
+                return Error::ERR_CANT_CONNECT;
             }
         };
 
-        let transport = match ClientTransport::new(socket_addr) {
+        let transport = match UDPClientTransport::new(socket_addr) {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create transport: {}", e);
-                return Error::from(Error::ERR_CANT_CREATE);
+                return Error::ERR_CANT_CREATE;
             }
         };
 
@@ -100,7 +99,7 @@ impl NodeTunnelPeer {
             Ok(_) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -111,7 +110,7 @@ impl NodeTunnelPeer {
             Ok(_) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to get rooms: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -125,7 +124,7 @@ impl NodeTunnelPeer {
             Ok(_) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to join room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -139,7 +138,7 @@ impl NodeTunnelPeer {
             Ok(_) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to update room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -148,11 +147,11 @@ impl NodeTunnelPeer {
         match event {
             RelayEvent::ConnectedToServer => {
                 match self.relay_client.req_auth(self.app_id.clone()) {
+                    Ok(_) => {}
                     Err(e) => {
                         godot_error!("[NodeTunnel] Failed to authenticate: {}", e);
                         self.signals().error().emit(e.to_string());
                     }
-                    _ => {}
                 }
             }
             RelayEvent::Authenticated => {
@@ -255,7 +254,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
             target_peer: 0,
             transfer_mode: TransferMode::UNRELIABLE,
             incoming_packets: vec![],
-            relay_client: RelayClient::new(),
+            relay_client: RelayClient::<UDPClientTransport>::new(),
             outgoing_queue: vec![],
             last_poll_time: None,
             base,
@@ -263,8 +262,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
     }
 
     fn get_available_packet_count(&self) -> i32 {
-        let count = self.incoming_packets.len() as i32;
-        count
+        self.incoming_packets.len() as i32
     }
 
     fn get_max_packet_size(&self) -> i32 {
