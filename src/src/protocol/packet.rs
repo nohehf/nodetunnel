@@ -1,5 +1,5 @@
 use crate::protocol::error::ProtocolError;
-use crate::protocol::ids::*;
+use crate::protocol::ids::{AUTHENTICATE, CLIENT_AUTHENTICATED, CREATE_ROOM, JOIN_ROOM, CONNECTED_TO_ROOM, PEER_JOIN_ATTEMPT, PEER_JOINED, PEER_LEFT, GAME_DATA, FORCE_DISCONNECT, ERROR_PACKET, REQ_ROOMS, GET_ROOMS, UPDATE_ROOM, JOIN_RES};
 use crate::protocol::serialize::{
     push_bool, push_i32, push_string, push_u64, push_vec_room_info, read_bool, read_i32,
     read_string, read_u64, read_vec_room_info,
@@ -86,7 +86,7 @@ impl PacketType {
                 let (is_public, r) = read_bool(rest)?;
                 let metadata = match read_string(r) {
                     Ok((name, _)) => name,
-                    Err(_) => "".into(),
+                    Err(_) => String::new(),
                 };
 
                 PacketType::CreateRoom {
@@ -173,6 +173,7 @@ impl PacketType {
         })
     }
 
+    #[must_use] 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::new();
 

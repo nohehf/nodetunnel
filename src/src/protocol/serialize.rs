@@ -55,7 +55,7 @@ pub fn push_string(buf: &mut Vec<u8>, value: &str) {
 }
 
 pub fn push_bool(buf: &mut Vec<u8>, value: bool) {
-    push_i32(buf, if value { 1 } else { 0 });
+    push_i32(buf, i32::from(value));
 }
 
 pub fn push_i32(buf: &mut Vec<u8>, value: i32) {
@@ -63,7 +63,7 @@ pub fn push_i32(buf: &mut Vec<u8>, value: i32) {
 }
 
 pub fn push_u64(buf: &mut Vec<u8>, value: u64) {
-    buf.extend(value.to_be_bytes())
+    buf.extend(value.to_be_bytes());
 }
 
 pub fn read_room_info(bytes: &[u8]) -> Result<(RoomInfo, &[u8]), ProtocolError> {

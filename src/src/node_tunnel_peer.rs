@@ -9,8 +9,7 @@ use godot::global::{Error, godot_error, godot_warn};
 use godot::meta::ToGodot;
 use godot::obj::{Base, WithUserSignals};
 use godot::prelude::{GodotClass, godot_api};
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::str::FromStr;
+use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
 struct GamePacket {
@@ -60,15 +59,12 @@ impl NodeTunnelPeer {
         self.app_id = app_id;
 
         let socket_addr = match relay_address.to_socket_addrs() {
-            Ok(mut addrs) => match addrs.next() {
-                Some(a) => a,
-                None => {
-                    godot_error!(
-                        "[NodeTunnel] DNS lookup returned no addresses: {}",
-                        relay_address
-                    );
-                    return Error::from(Error::ERR_CANT_CONNECT);
-                }
+            Ok(mut addrs) => if let Some(a) = addrs.next() { a } else {
+                godot_error!(
+                    "[NodeTunnel] DNS lookup returned no addresses: {}",
+                    relay_address
+                );
+                return Error::ERR_CANT_CONNECT;
             },
             Err(e) => {
                 godot_error!(
@@ -76,7 +72,7 @@ impl NodeTunnelPeer {
                     relay_address,
                     e
                 );
-                return Error::from(Error::ERR_CANT_CONNECT);
+                return Error::ERR_CANT_CONNECT;
             }
         };
 
@@ -84,7 +80,7 @@ impl NodeTunnelPeer {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create transport: {}", e);
-                return Error::from(Error::ERR_CANT_CREATE);
+                return Error::ERR_CANT_CREATE;
             }
         };
 
@@ -97,10 +93,10 @@ impl NodeTunnelPeer {
     #[func]
     fn host_room(&mut self, public: bool, metadata: String) -> Error {
         match self.relay_client.req_create_room(public, metadata) {
-            Ok(_) => Error::OK,
+            Ok(()) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -108,10 +104,10 @@ impl NodeTunnelPeer {
     #[func]
     fn get_rooms(&mut self) -> Error {
         match self.relay_client.req_rooms() {
-            Ok(_) => Error::OK,
+            Ok(()) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to get rooms: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -122,10 +118,10 @@ impl NodeTunnelPeer {
             .relay_client
             .req_join_room(host_id, metadata.to_string())
         {
-            Ok(_) => Error::OK,
+            Ok(()) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to join room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -136,10 +132,10 @@ impl NodeTunnelPeer {
             .relay_client
             .req_update_room(&self.room_id.to_string(), &metadata)
         {
-            Ok(_) => Error::OK,
+            Ok(()) => Error::OK,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to update room: {}", e);
-                Error::from(Error::ERR_CANT_CREATE)
+                Error::ERR_CANT_CREATE
             }
         }
     }
@@ -147,12 +143,9 @@ impl NodeTunnelPeer {
     fn handle_relay_event(&mut self, event: RelayEvent) {
         match event {
             RelayEvent::ConnectedToServer => {
-                match self.relay_client.req_auth(self.app_id.clone()) {
-                    Err(e) => {
-                        godot_error!("[NodeTunnel] Failed to authenticate: {}", e);
-                        self.signals().error().emit(e.to_string());
-                    }
-                    _ => {}
+                if let Err(e) = self.relay_client.req_auth(self.app_id.clone()) {
+                    godot_error!("[NodeTunnel] Failed to authenticate: {}", e);
+                    self.signals().error().emit(e.to_string());
                 }
             }
             RelayEvent::Authenticated => {
@@ -169,7 +162,7 @@ impl NodeTunnelPeer {
                     room_array.push(&room_dict.to_variant());
                 }
 
-                self.signals().rooms_received().emit(&room_array)
+                self.signals().rooms_received().emit(&room_array);
             }
             RelayEvent::RoomJoined { room_id, peer_id } => {
                 self.connection_status = ConnectionStatus::CONNECTED;
@@ -193,7 +186,7 @@ impl NodeTunnelPeer {
                         allowed = self
                             .join_validation
                             .call(&[metadata.to_variant()])
-                            .booleanize()
+                            .booleanize();
                     }
 
                     self.relay_client
@@ -203,11 +196,11 @@ impl NodeTunnelPeer {
             }
             RelayEvent::PeerJoinedRoom { peer_id } => {
                 if self.is_server() {
-                    self.signals().peer_connected().emit(peer_id as i64);
+                    self.signals().peer_connected().emit(i64::from(peer_id));
                 }
             }
             RelayEvent::PeerLeftRoom { peer_id } => {
-                self.signals().peer_disconnected().emit(peer_id as i64);
+                self.signals().peer_disconnected().emit(i64::from(peer_id));
             }
             RelayEvent::GameDataReceived {
                 channel,
@@ -220,9 +213,9 @@ impl NodeTunnelPeer {
                 };
 
                 self.incoming_packets.push(GamePacket {
-                    transfer_mode,
                     from_peer,
                     data,
+                    transfer_mode,
                 });
             }
             RelayEvent::ForceDisconnect => {
@@ -247,7 +240,7 @@ impl NodeTunnelPeer {
 impl IMultiplayerPeerExtension for NodeTunnelPeer {
     fn init(base: Base<Self::Base>) -> Self {
         Self {
-            app_id: "".to_string(),
+            app_id: String::new(),
             room_id: "".to_godot(),
             join_validation: Callable::invalid(),
             unique_id: 0,
@@ -263,8 +256,8 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
     }
 
     fn get_available_packet_count(&self) -> i32 {
-        let count = self.incoming_packets.len() as i32;
-        count
+        
+        self.incoming_packets.len() as i32
     }
 
     fn get_max_packet_size(&self) -> i32 {
@@ -272,11 +265,11 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
     }
 
     fn get_packet_script(&mut self) -> PackedByteArray {
-        if !self.incoming_packets.is_empty() {
+        if self.incoming_packets.is_empty() {
+            PackedByteArray::new()
+        } else {
             let packet = self.incoming_packets.remove(0);
             PackedByteArray::from(packet.data.as_slice())
-        } else {
-            PackedByteArray::new()
         }
     }
 
@@ -300,8 +293,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
     fn get_packet_mode(&self) -> TransferMode {
         self.incoming_packets
             .first()
-            .map(|p| p.transfer_mode)
-            .unwrap_or(TransferMode::UNRELIABLE)
+            .map_or(TransferMode::UNRELIABLE, |p| p.transfer_mode)
     }
 
     fn set_transfer_channel(&mut self, p_channel: i32) {
@@ -329,8 +321,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
     fn get_packet_peer(&self) -> i32 {
         self.incoming_packets
             .first()
-            .map(|p| p.from_peer)
-            .unwrap_or(0)
+            .map_or(0, |p| p.from_peer)
     }
 
     fn is_server(&self) -> bool {
@@ -348,7 +339,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
         match self.relay_client.update(delta) {
             Ok(events) => {
                 for event in events {
-                    self.handle_relay_event(event)
+                    self.handle_relay_event(event);
                 }
             }
             Err(e) => {
@@ -358,7 +349,7 @@ impl IMultiplayerPeerExtension for NodeTunnelPeer {
 
         for (peer, data, channel) in self.outgoing_queue.drain(..) {
             match self.relay_client.send_game_data(peer, data, channel) {
-                Ok(_) => {}
+                Ok(()) => {}
                 Err(e) => {
                     godot_error!("[NodeTunnel] Failed to send game data: {}", e);
                 }

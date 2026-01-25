@@ -95,12 +95,12 @@ impl ClientTransport {
     pub fn send(&mut self, data: Vec<u8>, channel: Channel) -> Result<(), std::io::Error> {
         let packet = match channel {
             Channel::Reliable => {
-                let pkt = self.channel.encode(&data, PacketType::ReliableOrdered);
-                pkt
+                
+                self.channel.encode(&data, PacketType::ReliableOrdered)
             }
             Channel::Unreliable => {
-                let pkt = self.channel.encode(&data, PacketType::Unreliable);
-                pkt
+                
+                self.channel.encode(&data, PacketType::Unreliable)
             }
         };
 

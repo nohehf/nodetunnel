@@ -87,7 +87,7 @@ impl RelayClient {
                     events.push(RelayEvent::Authenticated);
                 }
                 PacketType::ConnectedToRoom { room_id, peer_id } => {
-                    events.push(RelayEvent::RoomJoined { room_id, peer_id })
+                    events.push(RelayEvent::RoomJoined { room_id, peer_id });
                 }
                 PacketType::GetRooms { rooms } => events.push(RelayEvent::RoomsReceived { rooms }),
                 PacketType::PeerJoinAttempt {
@@ -98,10 +98,10 @@ impl RelayClient {
                     metadata,
                 }),
                 PacketType::PeerJoinedRoom { peer_id } => {
-                    events.push(RelayEvent::PeerJoinedRoom { peer_id })
+                    events.push(RelayEvent::PeerJoinedRoom { peer_id });
                 }
                 PacketType::PeerLeftRoom { peer_id } => {
-                    events.push(RelayEvent::PeerLeftRoom { peer_id })
+                    events.push(RelayEvent::PeerLeftRoom { peer_id });
                 }
                 PacketType::GameData { from_peer, data } => {
                     events.push(RelayEvent::GameDataReceived {
@@ -225,7 +225,7 @@ impl RelayClient {
     pub fn is_connected(&self) -> bool {
         self.transport
             .as_ref()
-            .map_or(false, |transport| transport.is_connected())
+            .is_some_and(super::super::transport::client::ClientTransport::is_connected)
     }
 
     fn send_packet(
