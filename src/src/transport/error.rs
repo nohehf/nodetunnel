@@ -7,4 +7,7 @@ pub enum TransportError {
 
     #[error("Clock may have gone backwards: {0}")]
     ClockError(#[from] std::time::SystemTimeError),
+
+    #[error("Transport error: {0}")]
+    Other(String),
 }
