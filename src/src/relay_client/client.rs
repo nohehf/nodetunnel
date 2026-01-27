@@ -33,6 +33,11 @@ impl<T: ClientTransport> RelayClient<T> {
         self.client_state = ClientState::Connecting;
         self.transport = Some(transport);
     }
+    
+    /// Get mutable reference to transport (for WebRTC-specific operations)
+    pub fn transport_mut(&mut self) -> Option<&mut T> {
+        self.transport.as_mut()
+    }
 
     pub fn update(&mut self, delta: Duration) -> Result<Vec<RelayEvent>, RelayClientError> {
         let transport = self

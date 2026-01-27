@@ -1,16 +1,17 @@
 use crate::transport::client::{ClientEvent, ClientTransport};
 use crate::transport::common::Channel;
 use crate::transport::error::TransportError;
-use godot::builtin::{Dictionary, GString, PackedByteArray, PackedStringArray, varray, vdict};
-use godot::classes::{
-    HttpRequest, Json, Node, Object, WebRtcDataChannel, WebRtcPeerConnection, http_client::Method,
+use godot::builtin::{
+    Dictionary, GString, PackedByteArray, PackedStringArray, StringName, Variant, varray, vdict,
 };
-use godot::global::Error;
+use godot::builtin::Callable;
+use godot::classes::{
+    HttpClient, Json, Node, Object, WebRtcDataChannel, WebRtcPeerConnection, http_client::Method, http_client::Status,
+};
+use godot::global::{Error, godot_print};
 use godot::meta::ToGodot;
-use godot::obj::{Base, Gd, NewAlloc, NewGd};
+use godot::obj::{Base, Gd, NewAlloc, NewGd, WithBaseField};
 use godot::prelude::{GodotClass, INode, godot_api};
-use std::cell::RefCell;
-use std::rc::Rc;
 
 // TODO(@nohehf): Split this into multiple files, extract signaling logic
 
@@ -22,16 +23,20 @@ pub struct WebRTCClientTransport {
     peer_connection: Gd<WebRtcPeerConnection>,
     /// Data channel for communication
     data_channel: Gd<WebRtcDataChannel>,
-    /// HTTP request for signaling (created internally)
-    http_request: Gd<HttpRequest>,
-    /// Internal signal handler node
+    /// HTTP client for signaling (doesn't need scene tree)
+    http_client: Gd<HttpClient>,
+    /// Signal handler node (receives signals and calls poll)
     signal_handler: Gd<SignalHandler>,
+    /// Pending offer received from signal (stored directly, no Rc<RefCell> needed)
+    pending_offer: Option<SdpDescription>,
     /// Signaling server URL (e.g., "http://localhost:8080")
     signaling_url: String,
     /// Connection status
     connected: bool,
     /// Signaling state: waiting for offer, waiting for answer, etc.
     signaling_state: SignalingState,
+    /// Pending HTTP request body (offer JSON) to send when connected
+    pending_http_request_body: Option<PackedByteArray>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,19 +49,12 @@ enum SignalingState {
 
 const DATA_CHANNEL_NAME: &str = "game";
 
-/// Represents an SDP (Session Description Protocol) description
-#[derive(Debug, Clone)]
-struct SdpDescription {
-    type_: GString,
-    sdp: GString,
-}
-
-/// Minimal helper Node to handle WebRTC and HTTP signals internally
+/// Minimal node ONLY for receiving WebRTC signals and calling poll (unavoidable - Godot requires nodes)
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct SignalHandler {
-    pending_offer: Rc<RefCell<Option<SdpDescription>>>,
-    pending_answer: Rc<RefCell<Option<(i64, PackedByteArray)>>>,
+    poll_callable: Callable,
+    offer_callback: Callable, // Callback to store offer in transport
     #[base]
     base: Base<Node>,
 }
@@ -65,9 +63,21 @@ struct SignalHandler {
 impl INode for SignalHandler {
     fn init(base: Base<Node>) -> Self {
         Self {
-            pending_offer: Rc::new(RefCell::new(None)),
-            pending_answer: Rc::new(RefCell::new(None)),
+            poll_callable: Callable::invalid(),
+            offer_callback: Callable::invalid(),
             base,
+        }
+    }
+
+    fn ready(&mut self) {
+        // Enable processing to call poll every frame
+        self.base_mut().set_process(true);
+    }
+
+    fn process(&mut self, _delta: f64) {
+        // Call poll callback if valid (calls WebNodeTunnelPeer::poll() which calls transport.poll())
+        if self.poll_callable.is_valid() {
+            let _ = self.poll_callable.call(&[]);
         }
     }
 }
@@ -76,20 +86,42 @@ impl INode for SignalHandler {
 impl SignalHandler {
     #[func]
     fn on_session_description_created(&mut self, type_: GString, sdp: GString) {
-        *self.pending_offer.borrow_mut() = Some(SdpDescription { type_, sdp });
+        // Defer callback call to avoid bind conflicts - idiomatic Godot!
+        if self.offer_callback.is_valid() {
+            // Use call_deferred to release borrow before callback executes
+            let callback = self.offer_callback.clone();
+            let type_var = type_.to_variant();
+            let sdp_var = sdp.to_variant();
+            self.base_mut().call_deferred("_call_offer_callback", &[callback.to_variant(), type_var, sdp_var]);
+        }
+    }
+    
+    #[func]
+    fn _call_offer_callback(&mut self, callback: Variant, type_: Variant, sdp: Variant) {
+        // This is called deferred, so no bind conflicts!
+        if let Ok(callable) = callback.try_to::<Callable>() {
+            let _ = callable.call(&[type_, sdp]);
+        }
     }
 
     #[func]
-    fn on_http_request_completed(
-        &mut self,
-        _result: i64,
-        response_code: i64,
-        _headers: PackedStringArray,
-        body: PackedByteArray,
-    ) {
-        *self.pending_answer.borrow_mut() = Some((response_code, body));
+    fn set_poll_callable(&mut self, callable: Callable) {
+        self.poll_callable = callable;
+    }
+    
+    #[func]
+    fn set_offer_callback(&mut self, callable: Callable) {
+        self.offer_callback = callable;
     }
 }
+
+/// Represents an SDP (Session Description Protocol) description
+#[derive(Debug, Clone)]
+struct SdpDescription {
+    type_: GString,
+    sdp: GString,
+}
+
 
 impl WebRTCClientTransport {
     /// Create a new WebRTC client transport
@@ -97,7 +129,14 @@ impl WebRTCClientTransport {
     ///
     /// # Arguments
     /// * `signaling_url` - HTTP URL for signaling server (e.g., "http://localhost:8080")
-    pub fn new(signaling_url: String) -> Result<Self, TransportError> {
+    /// * `signal_node` - A node in the scene tree (only needed for WebRTC signals - unavoidable)
+    /// * `poll_callable` - Callable to call poll() on the peer (for automatic polling)
+    /// * `offer_callback` - Callable to call when offer is received (stores it in transport)
+    pub fn new(signaling_url: String, signal_node: Gd<Node>, poll_callable: Callable, offer_callback: Callable) -> Result<Self, TransportError> {
+        godot_print!(
+            "Creating WebRTC client transport with signaling URL: {}",
+            signaling_url
+        );
         let mut peer_connection = WebRtcPeerConnection::new_gd();
 
         // Initialize with ICE servers (same as GDScript: pc.initialize({"iceServers": [...]}))
@@ -107,6 +146,7 @@ impl WebRTCClientTransport {
             }],
         };
 
+        godot_print!("Initializing WebRTC peer connection");
         match peer_connection
             .initialize_ex()
             .configuration(&ice_servers)
@@ -121,26 +161,45 @@ impl WebRTCClientTransport {
             }
         }
 
+        godot_print!("Creating data channel");
         // Create data channel (same as GDScript: channel = pc.create_data_channel("game"))
         let data_channel = peer_connection
             .create_data_channel(DATA_CHANNEL_NAME)
             .ok_or_else(|| TransportError::Other("Failed to create data channel".to_string()))?;
 
-        // Create HTTP request for signaling
-        let http_request = HttpRequest::new_alloc();
+        godot_print!("Creating HTTP client");
+        // Create HTTP client for signaling (doesn't need scene tree!)
+        let http_client = HttpClient::new_gd();
 
-        // Create signal handler node
-        let signal_handler = SignalHandler::new_alloc();
+        // Create minimal signal handler (ONLY for WebRTC signals and polling - unavoidable)
+        let mut signal_handler = SignalHandler::new_alloc();
+        {
+            let mut handler = signal_handler.bind_mut();
+            handler.set_poll_callable(poll_callable);
+            handler.set_offer_callback(offer_callback);
+        }
+        
+        // Add to provided node (must be in scene tree for signals to work)
+        let mut signal_node_obj = signal_node.upcast::<Object>();
+        let add_child_name = StringName::from("add_child");
+        let handler_variant = signal_handler.clone().upcast::<Object>().to_variant();
+        let _ = signal_node_obj.call(&add_child_name, &[handler_variant]);
 
         let mut transport = Self {
             peer_connection: peer_connection.clone(),
             data_channel,
-            http_request: http_request.clone(),
+            http_client: http_client.clone(),
             signal_handler: signal_handler.clone(),
+            pending_offer: None,
             signaling_url,
             connected: false,
             signaling_state: SignalingState::NotStarted,
+            pending_http_request_body: None,
         };
+        
+        // Set up offer callback - create callable to a method that stores offer in transport
+        // We'll use a method on WebNodeTunnelPeer that can access the transport
+        // For now, we'll check for offers in poll() using get_pending_offer() which doesn't require mut
 
         // Connect WebRTC signal to handler
         let mut pc_obj = transport.peer_connection.clone().upcast::<Object>();
@@ -156,37 +215,32 @@ impl WebRTCClientTransport {
                 )));
             }
         }
+        
 
-        // Connect HTTP request signal to handler
-        let mut http_obj = http_request.clone().upcast::<Object>();
-        let http_callable = handler_obj.callable("on_http_request_completed");
-
-        match http_obj.connect("request_completed", &http_callable) {
-            Error::OK => {}
-            err => {
-                return Err(TransportError::Other(format!(
-                    "Failed to connect request_completed signal: {:?}",
-                    err
-                )));
-            }
-        }
-
+        godot_print!("Starting signaling process");
         // Start signaling process
         transport.start_signaling()?;
 
         Ok(transport)
     }
 
+    /// Set pending offer (called from signal handler callback)
+    pub fn set_pending_offer(&mut self, type_: GString, sdp: GString) {
+        self.pending_offer = Some(SdpDescription { type_, sdp });
+    }
+    
     /// Start signaling process - creates offer and sends to server
     fn start_signaling(&mut self) -> Result<(), TransportError> {
         self.signaling_state = SignalingState::WaitingForOffer;
+        self.pending_offer = None; // Clear any pending offer
 
-        // Clear any previous offer
-        *self.signal_handler.bind().pending_offer.borrow_mut() = None;
-
+        godot_print!("Creating WebRTC offer...");
         // Create offer (triggers session_description_created signal)
         match self.peer_connection.create_offer() {
-            Error::OK => Ok(()),
+            Error::OK => {
+                godot_print!("WebRTC offer creation initiated");
+                Ok(())
+            }
             err => Err(TransportError::Other(format!(
                 "Failed to create offer: {:?}",
                 err
@@ -194,29 +248,126 @@ impl WebRTCClientTransport {
         }
     }
 
-    /// Send offer to signaling server via HTTP POST
+    /// Parse URL into host, port, and path
+    fn parse_url(url_str: &str) -> Result<(String, i32, String), TransportError> {
+        // Simple URL parsing: http://host:port/path or https://host:port/path
+        let url_str = url_str.trim();
+        let (scheme, rest) = if url_str.starts_with("https://") {
+            ("https", &url_str[8..])
+        } else if url_str.starts_with("http://") {
+            ("http", &url_str[7..])
+        } else {
+            return Err(TransportError::Other("URL must start with http:// or https://".to_string()));
+        };
+        
+        let default_port = if scheme == "https" { 443 } else { 80 };
+        
+        // Split host:port from path
+        let (host_port, path) = match rest.find('/') {
+            Some(pos) => (&rest[..pos], &rest[pos..]),
+            None => (rest, "/"),
+        };
+        
+        // Split host and port
+        let (host, port) = match host_port.find(':') {
+            Some(pos) => {
+                let host = host_port[..pos].to_string();
+                let port_str = &host_port[pos + 1..];
+                let port = port_str.parse::<i32>()
+                    .map_err(|_| TransportError::Other("Invalid port number".to_string()))?;
+                (host, port)
+            }
+            None => (host_port.to_string(), default_port),
+        };
+        
+        Ok((host, port, path.to_string()))
+    }
+    
+    /// Send offer to signaling server via HTTP POST using HTTPClient
     fn send_offer_to_server(&mut self, offer: SdpDescription) -> Result<(), TransportError> {
-        // Create JSON body
+        godot_print!("Preparing to send offer to server: {}", self.signaling_url);
+        
+        // Create JSON body and store it
         let json_bytes = Self::create_offer_json(&offer)?;
-
-        // Prepare headers
-        let mut headers = PackedStringArray::new();
-        headers.push("Content-Type: application/json");
-
-        // Send POST request with body using HttpRequest
-        match self
-            .http_request
-            .request_raw_ex(&self.signaling_url)
-            .custom_headers(&headers)
-            .method(Method::POST)
-            .request_data_raw(&json_bytes)
-            .done()
-        {
-            Error::OK => Ok(()),
-            err => Err(TransportError::Other(format!(
-                "Failed to send HTTP request: {:?}",
-                err
-            ))),
+        godot_print!("Created JSON body, size: {} bytes", json_bytes.len());
+        self.pending_http_request_body = Some(json_bytes);
+        
+        // Parse URL - HttpClient.connect_to_host handles host:port format
+        let (host, port, _path) = Self::parse_url(&self.signaling_url)?;
+        let host_with_port = if port == 80 || port == 443 {
+            host.clone()
+        } else {
+            format!("{}:{}", host, port)
+        };
+        
+        // Connect to host (will be processed in poll())
+        // Note: HttpClient.connect_to_host doesn't handle SSL - we'll need to handle that differently
+        // For now, assume HTTPS URLs will work if the server supports it
+        match self.http_client.connect_to_host(&host_with_port) {
+            Error::OK => {
+                godot_print!("Initiating connection to {}...", host_with_port);
+                Ok(())
+            }
+            err => Err(TransportError::Other(format!("Failed to connect to host: {:?}", err))),
+        }
+    }
+    
+    /// Process HTTP client - handles connection, request sending, and response reading
+    fn process_http_client(&mut self) -> Result<Option<(i64, PackedByteArray)>, TransportError> {
+        self.http_client.poll(); // Always poll HTTP client
+        
+        let status = self.http_client.get_status();
+        
+        match status {
+            Status::CONNECTING | Status::RESOLVING => {
+                // Still connecting, wait
+                Ok(None)
+            }
+            Status::CONNECTED => {
+                // Connected, send the request with body
+                if let Some(body) = self.pending_http_request_body.take() {
+                    godot_print!("HTTP client connected, sending request with body ({} bytes)", body.len());
+                    
+                    let mut headers = PackedStringArray::new();
+                    headers.push("Content-Type: application/json");
+                    
+                    // Use request_raw which accepts the body directly
+                    match self.http_client.request_raw(Method::POST, &self.signaling_url, &headers, &body) {
+                        Error::OK => {
+                            godot_print!("HTTP POST request sent successfully with body");
+                        }
+                        err => {
+                            return Err(TransportError::Other(format!("Failed to send HTTP request: {:?}", err)));
+                        }
+                    }
+                }
+                Ok(None)
+            }
+            Status::REQUESTING => {
+                // Request sent, waiting for response
+                Ok(None)
+            }
+            Status::BODY => {
+                // Response received, read body
+                let mut body = PackedByteArray::new();
+                loop {
+                    self.http_client.poll();
+                    let chunk = self.http_client.read_response_body_chunk();
+                    if chunk.len() == 0 {
+                        break;
+                    }
+                    body.extend_array(&chunk);
+                }
+                
+                let response_code = self.http_client.get_response_code();
+                godot_print!("HTTP response received: {}", response_code);
+                self.http_client.close();
+                Ok(Some((response_code as i64, body)))
+            }
+            Status::DISCONNECTED => {
+                Ok(None)
+            }
+            _ => Ok(None),
         }
     }
 
@@ -231,17 +382,34 @@ impl WebRTCClientTransport {
             }
         }
 
+        // Process HTTP client (connection, request, response)
+        let http_result = self.process_http_client();
+        if let Ok(Some((response_code, body))) = http_result {
+            if self.signaling_state == SignalingState::WaitingForAnswer {
+                if response_code == 200 {
+                    godot_print!("Handling answer response");
+                    self.handle_answer_response(body)?;
+                } else {
+                    return Err(TransportError::Other(format!(
+                        "Signaling failed: {}",
+                        response_code
+                    )));
+                }
+            }
+        }
+
         // Check if offer was created and send it via HTTP
         if self.signaling_state == SignalingState::WaitingForOffer {
-            // Check if we have a pending offer from the signal
-            let offer = self.signal_handler.bind().pending_offer.borrow_mut().take();
-            if let Some(offer) = offer {
+            // Check pending offer (set directly by signal handler callback - no bind conflicts!)
+            if let Some(offer) = self.pending_offer.take() {
+                godot_print!("Offer received from signal, type: {}", offer.type_);
                 // Set local description first
                 match self
                     .peer_connection
                     .set_local_description(&offer.type_, &offer.sdp)
                 {
                     Error::OK => {
+                        godot_print!("Local description set, sending offer to server");
                         // Send offer to server via HTTP
                         self.send_offer_to_server(offer)?;
                         self.signaling_state = SignalingState::WaitingForAnswer;
@@ -252,27 +420,6 @@ impl WebRTCClientTransport {
                             err
                         )));
                     }
-                }
-            }
-        }
-
-        // Check HTTP request status
-        if self.signaling_state == SignalingState::WaitingForAnswer {
-            // Check if we have a pending answer from the signal
-            let answer = self
-                .signal_handler
-                .bind()
-                .pending_answer
-                .borrow_mut()
-                .take();
-            if let Some((response_code, body)) = answer {
-                if response_code == 200 {
-                    self.handle_answer_response(body)?;
-                } else {
-                    return Err(TransportError::Other(format!(
-                        "Signaling failed: {}",
-                        response_code
-                    )));
                 }
             }
         }

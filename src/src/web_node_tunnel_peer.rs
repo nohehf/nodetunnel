@@ -4,12 +4,11 @@ use crate::transport::common::Channel;
 use crate::transport::webrtc::WebRTCClientTransport;
 use godot::builtin::{Array, Callable, Dictionary, GString, PackedByteArray, Variant};
 use godot::classes::multiplayer_peer::{ConnectionStatus, TransferMode};
-use godot::classes::{IMultiplayerPeerExtension, MultiplayerPeerExtension};
-use godot::global::{Error, godot_error, godot_warn};
+use godot::classes::{IMultiplayerPeerExtension, MultiplayerPeerExtension, Node};
+use godot::global::{Error, godot_error, godot_print, godot_warn};
 use godot::meta::ToGodot;
-use godot::obj::{Base, WithUserSignals};
+use godot::obj::{Base, Gd, NewAlloc, WithUserSignals};
 use godot::prelude::{GodotClass, godot_api};
-use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
 struct GamePacket {
@@ -35,6 +34,12 @@ struct WebNodeTunnelPeer {
     relay_client: RelayClient<WebRTCClientTransport>,
     outgoing_queue: Vec<(i32, Vec<u8>, Channel)>,
     last_poll_time: Option<Instant>,
+    // Minimal node ONLY for WebRTC signals (unavoidable - Godot requires nodes for signals)
+    signal_node: Option<Gd<Node>>,
+    // Callable to poll() method (created in init when we have access)
+    poll_callable: Callable,
+    // Callable to set_pending_offer() method (created in init when we have access)
+    offer_callable: Callable,
     base: Base<MultiplayerPeerExtension>,
 }
 
@@ -55,32 +60,71 @@ impl WebNodeTunnelPeer {
     #[signal]
     fn rooms_received(rooms: Array<Variant>);
 
+    /// Internal poll method - exposed as func so SignalHandler can call it
+    #[func]
+    fn _internal_poll(&mut self) {
+        // Call the actual poll() implementation
+        self.poll();
+    }
+
+    /// Set pending offer in transport (called from SignalHandler callback)
+    #[func]
+    fn _set_pending_offer(&mut self, type_: GString, sdp: GString) {
+        if let Some(transport) = self.relay_client.transport_mut() {
+            transport.set_pending_offer(type_, sdp);
+        }
+    }
+
     #[func]
     fn connect_to_relay(&mut self, relay_address: String, app_id: String) -> Error {
+        godot_print!("[WebNodeTunnelPeer] Connecting to relay: {}", relay_address);
         self.app_id = app_id;
 
-        // let socket_addr = match relay_address.to_socket_addrs() {
-        //     Ok(mut addrs) => match addrs.next() {
-        //         Some(a) => a,
-        //         None => {
-        //             godot_error!(
-        //                 "[NodeTunnel] DNS lookup returned no addresses: {}",
-        //                 relay_address
-        //             );
-        //             return Error::ERR_CANT_CONNECT;
-        //         }
-        //     },
-        //     Err(e) => {
-        //         godot_error!(
-        //             "[NodeTunnel] Failed to resolve relay address {}: {}",
-        //             relay_address,
-        //             e
-        //         );
-        //         return Error::ERR_CANT_CONNECT;
-        //     }
-        // };
+        // Create minimal node ONLY for WebRTC signals (must be in scene tree)
+        let signal_node = if let Some(ref node) = self.signal_node {
+            node.clone()
+        } else {
+            let mut node = Node::new_alloc();
+            node.set_name("WebRTCSignalNode");
 
-        let transport = match WebRTCClientTransport::new(relay_address) {
+            // Add to scene tree (deferred to avoid "busy" error)
+            use godot::builtin::{StringName, Variant};
+            use godot::classes::Engine;
+            use godot::obj::Singleton;
+
+            let engine = Engine::singleton();
+            if let Some(main_loop) = engine.get_main_loop() {
+                let mut main_loop_obj = main_loop.upcast::<godot::classes::Object>();
+                let get_root_name = StringName::from("get_root");
+                let root_result: Variant = main_loop_obj.call(&get_root_name, &[]);
+
+                if let Ok(root_gd) = root_result.try_to::<Gd<Node>>() {
+                    let mut root_obj = root_gd.upcast::<godot::classes::Object>();
+                    let call_deferred_name = StringName::from("call_deferred");
+                    let add_child_name = StringName::from("add_child");
+                    let node_variant = node.clone().upcast::<godot::classes::Object>().to_variant();
+                    let _ = root_obj.call(
+                        &call_deferred_name,
+                        &[add_child_name.to_variant(), node_variant],
+                    );
+                    godot_print!(
+                        "[WebNodeTunnelPeer] Added signal node to scene tree (only for WebRTC signals)"
+                    );
+                }
+            }
+
+            self.signal_node = Some(node.clone());
+            node
+        };
+
+        godot_print!("Creating WebRTC transport");
+        // Use the poll callable and offer callable created in init() for automatic polling and offer handling
+        let transport = match WebRTCClientTransport::new(
+            relay_address,
+            signal_node,
+            self.poll_callable.clone(),
+            self.offer_callable.clone(),
+        ) {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create transport: {}", e);
@@ -88,6 +132,7 @@ impl WebNodeTunnelPeer {
             }
         };
 
+        godot_print!("Connecting to relay");
         self.relay_client.connect(transport);
         self.connection_status = ConnectionStatus::CONNECTING;
 
@@ -246,6 +291,14 @@ impl WebNodeTunnelPeer {
 #[godot_api]
 impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
     fn init(base: Base<Self::Base>) -> Self {
+        godot_print!("Initializing WebNodeTunnelPeer");
+
+        // Create callables to methods (can only do this in init)
+        let self_gd = base.to_init_gd();
+        let self_obj = self_gd.upcast::<godot::classes::Object>();
+        let poll_callable = self_obj.callable("_internal_poll");
+        let offer_callable = self_obj.callable("_set_pending_offer");
+
         Self {
             app_id: "".to_string(),
             room_id: "".to_godot(),
@@ -258,6 +311,9 @@ impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
             relay_client: RelayClient::<WebRTCClientTransport>::new(),
             outgoing_queue: vec![],
             last_poll_time: None,
+            signal_node: None,
+            poll_callable,
+            offer_callable,
             base,
         }
     }
@@ -337,6 +393,10 @@ impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
     }
 
     fn poll(&mut self) {
+        // This is called automatically by Godot for MultiplayerPeerExtension
+        // But only when the peer is set as the multiplayer peer!
+        // If poll() isn't being called, set this peer as the multiplayer peer:
+        // get_multiplayer().multiplayer_peer = peer
         let now = Instant::now();
         let delta = match self.last_poll_time {
             Some(last) => now.duration_since(last),
@@ -375,6 +435,11 @@ impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
 
         self.unique_id = 0;
         self.connection_status = ConnectionStatus::DISCONNECTED;
+
+        // Clean up signal node if it exists
+        if let Some(mut node) = self.signal_node.take() {
+            node.queue_free();
+        }
     }
 
     fn disconnect_peer(&mut self, _p_peer: i32, _p_force: bool) {}
