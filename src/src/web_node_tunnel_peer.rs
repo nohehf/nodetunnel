@@ -33,10 +33,8 @@ struct WebNodeTunnelPeer {
     relay_client: RelayClient<WebRTCClientTransport>,
     outgoing_queue: Vec<(i32, Vec<u8>, Channel)>,
     last_poll_time: Option<Instant>,
-    // Signal node for WebRTC (required by Godot)
+    // Signal node for WebRTC (required by Godot for signal handling)
     signal_node: Option<Gd<Node>>,
-    // Callable to poll() method for automatic background polling
-    poll_callable: Callable,
     // Callable to handle_session_description() method for offer callback
     offer_callback: Callable,
     base: Base<MultiplayerPeerExtension>,
@@ -59,12 +57,6 @@ impl WebNodeTunnelPeer {
     #[signal]
     fn rooms_received(rooms: Array<Variant>);
 
-    /// Internal method to poll - called automatically by signal node for background HTTP signaling
-    #[func]
-    fn _internal_poll(&mut self) {
-        self.poll();
-    }
-
     /// Handle WebRTC session description - called from signal node (via call_deferred) to avoid binding conflicts
     #[func]
     fn _handle_session_description(&mut self, type_: GString, sdp: GString) {
@@ -78,14 +70,14 @@ impl WebNodeTunnelPeer {
         godot_print!("[WebNodeTunnelPeer] Connecting to relay: {}", relay_address);
         self.app_id = app_id;
 
-        // Create signal node for WebRTC (must be in scene tree)
+        // Create signal node for WebRTC (must be in scene tree for signals to work)
         let signal_node = if let Some(ref node) = self.signal_node {
             node.clone()
         } else {
             let mut node = Node::new_alloc();
             node.set_name("WebRTCSignalNode");
 
-            // Add to scene tree synchronously (required for signals to work)
+            // Add to scene tree (required for WebRTC signals)
             use godot::builtin::{StringName, Variant};
             use godot::classes::Engine;
             use godot::obj::Singleton;
@@ -97,7 +89,6 @@ impl WebNodeTunnelPeer {
                 let root_result: Variant = main_loop_obj.call(&get_root_name, &[]);
 
                 if let Ok(root_gd) = root_result.try_to::<Gd<Node>>() {
-                    // Always use deferred to avoid "busy" errors during setup
                     let mut root_obj = root_gd.upcast::<godot::classes::Object>();
                     let call_deferred_name = StringName::from("call_deferred");
                     let add_child_name = StringName::from("add_child");
@@ -113,9 +104,8 @@ impl WebNodeTunnelPeer {
             node
         };
 
-        // Create WebRTC transport (it will set up automatic polling via signal node)
-        // Use the callables created during init()
-        let transport = match WebRTCClientTransport::new(relay_address, signal_node.clone(), self.poll_callable.clone(), self.offer_callback.clone()) {
+        // Create WebRTC transport (polling happens automatically via Godot's multiplayer system)
+        let transport = match WebRTCClientTransport::new(relay_address, signal_node.clone(), self.offer_callback.clone()) {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[WebNodeTunnelPeer] Failed to create transport: {}", e);
@@ -128,7 +118,7 @@ impl WebNodeTunnelPeer {
         self.connection_status = ConnectionStatus::CONNECTING;
 
         // Poll immediately to process WebRTC signaling (offer creation, etc.)
-        // After this, polling happens automatically via signal node's _process()
+        // After this, polling happens automatically via Godot's multiplayer system
         self.poll();
 
         Error::OK
@@ -286,10 +276,9 @@ impl WebNodeTunnelPeer {
 #[godot_api]
 impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
     fn init(base: Base<Self::Base>) -> Self {
-        // Create callables during init (when to_init_gd() is available)
+        // Create callable during init (when to_init_gd() is available)
         let self_gd = base.to_init_gd();
         let self_obj = self_gd.upcast::<godot::classes::Object>();
-        let poll_callable = self_obj.callable("_internal_poll");
         let offer_callback = self_obj.callable("_handle_session_description");
         
         Self {
@@ -305,7 +294,6 @@ impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
             outgoing_queue: vec![],
             last_poll_time: None,
             signal_node: None,
-            poll_callable,
             offer_callback,
             base,
         }

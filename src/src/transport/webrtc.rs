@@ -22,13 +22,11 @@ struct SdpDescription {
 }
 
 /// Minimal node for WebRTC signals (required by Godot)
-/// Stores the offer when the signal fires and calls transport callback directly
-/// Automatically polls the transport in _process() for background HTTP signaling
+/// Only handles WebRTC signal callbacks - polling happens via Godot's multiplayer system
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct SignalNode {
     offer_callback: Callable, // Callback to set offer in transport
-    poll_callable: Callable,
     #[base]
     base: Base<Node>,
 }
@@ -38,23 +36,8 @@ impl INode for SignalNode {
     fn init(base: Base<Node>) -> Self {
         Self {
             offer_callback: Callable::invalid(),
-            poll_callable: Callable::invalid(),
             base,
         }
-    }
-
-    fn ready(&mut self) {
-        // Enable processing to poll automatically every frame
-        self.base_mut().set_process(true);
-    }
-
-    fn process(&mut self, _delta: f64) {
-        // Automatically poll the transport every frame for HTTP client progress
-        // Use call_deferred to avoid binding conflicts when poll() tries to call take_offer()
-        // This defers the poll call until after process() finishes, avoiding the mutable borrow conflict
-        let call_deferred_name = godot::builtin::StringName::from("call_deferred");
-        let call_poll_name = godot::builtin::StringName::from("_call_poll");
-        let _ = self.base_mut().call(&call_deferred_name, &[call_poll_name.to_variant()]);
     }
 }
 
@@ -97,19 +80,6 @@ impl SignalNode {
     fn set_offer_callback(&mut self, callback: Callable) {
         self.offer_callback = callback;
     }
-
-    #[func]
-    fn set_poll_callable(&mut self, callable: Callable) {
-        self.poll_callable = callable;
-    }
-
-    /// Wrapper method to call poll callable - used with call_deferred to avoid binding conflicts
-    #[func]
-    fn _call_poll(&mut self) {
-        if self.poll_callable.is_valid() {
-            let _ = self.poll_callable.call(&[]);
-        }
-    }
 }
 
 /// WebRTC client transport implementation
@@ -131,8 +101,8 @@ pub struct WebRTCClientTransport {
 impl WebRTCClientTransport {
     /// Create a new WebRTC client transport
     /// Performs HTTP signaling roundtrip: create offer -> POST -> receive answer -> setup connection
-    /// Sets up automatic polling via signal node's _process() for background HTTP signaling
-    pub fn new(signaling_url: String, parent_node: Gd<Node>, poll_callable: Callable, offer_callback: Callable) -> Result<Self, TransportError> {
+    /// Polling happens automatically via Godot's multiplayer system calling poll() on the peer
+    pub fn new(signaling_url: String, parent_node: Gd<Node>, offer_callback: Callable) -> Result<Self, TransportError> {
         godot_print!("[WebRTC] Creating transport with signaling URL: {}", signaling_url);
 
         // Create peer connection
@@ -189,10 +159,9 @@ impl WebRTCClientTransport {
             offer_created: false,
         };
 
-        // Set up callbacks in signal node
+        // Set up callback in signal node
         {
             let mut node_bind = signal_node.bind_mut();
-            node_bind.set_poll_callable(poll_callable.clone());
             node_bind.set_offer_callback(offer_callback);
         }
 
