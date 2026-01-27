@@ -322,23 +322,38 @@ impl WebRTCClientTransport {
             }
             Status::BODY => {
                 godot_print!("[WebRTC] HTTP client status: BODY (reading response)");
-                // Read response
+                // Read response - only read when status is BODY
                 let mut body = PackedByteArray::new();
                 loop {
                     self.http_client.poll();
+                    let current_status = self.http_client.get_status();
+                    if current_status != Status::BODY {
+                        // Status changed, stop reading
+                        break;
+                    }
                     let chunk = self.http_client.read_response_body_chunk();
                     if chunk.len() == 0 {
-                        break;
+                        // No more data available, check if we're still in BODY status
+                        self.http_client.poll();
+                        if self.http_client.get_status() != Status::BODY {
+                            break;
+                        }
+                        // Still in BODY but no chunk - might need to wait
+                        continue;
                     }
                     body.extend_array(&chunk);
                 }
 
                 let response_code = self.http_client.get_response_code();
-                godot_print!("[WebRTC] HTTP response code: {}", response_code);
+                godot_print!("[WebRTC] HTTP response code: {}, body size: {} bytes", response_code, body.len());
                 if response_code == 200 {
-                    godot_print!("[WebRTC] Received answer, setting remote description");
-                    self.handle_answer_response(body)?;
-                    self.signaling_complete = true;
+                    if body.len() > 0 {
+                        godot_print!("[WebRTC] Received answer, setting remote description");
+                        self.handle_answer_response(body)?;
+                        self.signaling_complete = true;
+                    } else {
+                        godot_print!("[WebRTC] Response code 200 but empty body, waiting for more data");
+                    }
                 } else {
                     return Err(TransportError::Other(format!(
                         "Signaling failed with code: {}",
@@ -532,6 +547,24 @@ impl ClientTransport for WebRTCClientTransport {
     }
 
     fn send_keepalive(&mut self) -> Result<(), TransportError> {
-        self.poll()
+        // Poll first to process any pending events
+        self.poll()?;
+        
+        // Send a keepalive packet over the data channel if connected
+        if self.is_channel_ready() {
+            let keepalive_data = vec![0xFF, 0xFF]; // Simple keepalive marker
+            let packet = PackedByteArray::from(keepalive_data.as_slice());
+            match self.data_channel.put_packet(&packet) {
+                Error::OK => {
+                    godot_print!("[WebRTC] Keepalive sent");
+                }
+                err => {
+                    godot_print!("[WebRTC] Failed to send keepalive: {:?}", err);
+                    return Err(TransportError::Other(format!("Failed to send keepalive: {:?}", err)));
+                }
+            }
+        }
+        
+        Ok(())
     }
 }

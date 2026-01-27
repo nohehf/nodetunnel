@@ -167,9 +167,13 @@ async fn handle_signaling(
     data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
         info!("📩 Received message on data channel '{}': {} bytes", dc_label_msg, msg.data.len());
         if msg.data.len() <= 100 {
-            debug!("   Data (hex): {:02x?}", msg.data);
+            info!("   Data (hex): {:02x?}", msg.data);
+            // Check if it's a keepalive packet
+            if msg.data.len() == 2 && msg.data[0] == 0xFF && msg.data[1] == 0xFF {
+                info!("   ✅ Keepalive packet received!");
+            }
         } else {
-            debug!("   Data (hex, first 100 bytes): {:02x?}...", &msg.data[..100.min(msg.data.len())]);
+            info!("   Data (hex, first 100 bytes): {:02x?}...", &msg.data[..100.min(msg.data.len())]);
         }
         Box::pin(async {})
     }));
