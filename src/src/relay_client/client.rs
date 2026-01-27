@@ -68,7 +68,8 @@ impl<T: ClientTransport> RelayClient<T> {
     }
 
     fn update_state(&mut self) -> Option<RelayEvent> {
-        if self.client_state == ClientState::Connecting && self.is_connected() {
+        let connected = self.is_connected();
+        if self.client_state == ClientState::Connecting && connected {
             self.client_state = ClientState::Connected;
             return Some(RelayEvent::ConnectedToServer);
         }
@@ -83,9 +84,15 @@ impl<T: ClientTransport> RelayClient<T> {
     ) -> Result<Vec<RelayEvent>, RelayClientError> {
         let mut events = vec![];
 
+        // Debug: log received packet
+        if !data.is_empty() {
+            eprintln!("[RelayClient] Received packet: {} bytes, first byte: 0x{:02x}", data.len(), data[0]);
+        }
+
         if let Ok(packet_type) = PacketType::from_bytes(&data) {
             match packet_type {
                 PacketType::ClientAuthenticated => {
+                    eprintln!("[RelayClient] Parsed CLIENT_AUTHENTICATED packet!");
                     self.client_state = ClientState::Authenticated;
                     events.push(RelayEvent::Authenticated);
                 }
@@ -126,6 +133,7 @@ impl<T: ClientTransport> RelayClient<T> {
                 }
             }
         } else {
+            eprintln!("[RelayClient] Failed to parse packet: {} bytes, first byte: 0x{:02x}", data.len(), if !data.is_empty() { data[0] } else { 0 });
             return Err(RelayClientError::PacketParsingError);
         }
 

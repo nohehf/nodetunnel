@@ -18,7 +18,6 @@ use webrtc::interceptor::registry::Registry;
 use webrtc::peer_connection::configuration::RTCConfiguration;
 use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState;
 use webrtc::peer_connection::sdp::session_description::RTCSessionDescription;
-use webrtc::peer_connection::RTCPeerConnection;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SignalingRequest {
@@ -140,47 +139,75 @@ async fn handle_signaling(
     );
     info!("✓ Peer connection created");
 
-    // Create data channel
-    info!("📡 Creating data channel 'game'...");
-    let data_channel = Arc::new(
-        peer_connection
-            .create_data_channel("game", None)
-            .await
-            .map_err(|e| {
-                error!("❌ Failed to create data channel: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?,
-    );
-    info!("✓ Data channel created (ID: {}, Label: '{}')", data_channel.id(), data_channel.label());
+    // Set up data channel handler BEFORE setting remote description
+    // The client's data channel will be received via on_data_channel callback
+    peer_connection.on_data_channel(Box::new(move |data_channel: Arc<webrtc::data_channel::RTCDataChannel>| {
+        let label = data_channel.label().to_string();
+        let dc_id = data_channel.id();
+        
+        info!("📡 Received data channel from client: '{}' (ID: {})", label, dc_id);
+        
+        let dc_label_open = label.clone();
+        let dc_id_open = dc_id;
+        data_channel.on_open(Box::new(move || {
+            info!("✅ Data channel opened: '{}' (ID: {})", dc_label_open, dc_id_open);
+            Box::pin(async {})
+        }));
 
-    // Set up data channel handlers
-    let dc_label = data_channel.label().to_string();
-    let dc_id = data_channel.id();
-    
-    let dc_label_open = dc_label.clone();
-    data_channel.on_open(Box::new(move || {
-        info!("✅ Data channel opened: '{}' (ID: {})", dc_label_open, dc_id);
-        Box::pin(async {})
-    }));
-
-    let dc_label_msg = dc_label.clone();
-    data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
-        info!("📩 Received message on data channel '{}': {} bytes", dc_label_msg, msg.data.len());
-        if msg.data.len() <= 100 {
-            info!("   Data (hex): {:02x?}", msg.data);
-            // Check if it's a keepalive packet
-            if msg.data.len() == 2 && msg.data[0] == 0xFF && msg.data[1] == 0xFF {
-                info!("   ✅ Keepalive packet received!");
+        let dc_label_msg = label.clone();
+        let dc_for_auth = data_channel.clone();
+        data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
+            let dc_clone = dc_for_auth.clone();
+            let label = dc_label_msg.clone();
+            
+            info!("📩 Received message on data channel '{}': {} bytes", label, msg.data.len());
+            
+            // Parse protocol packet
+            if !msg.data.is_empty() {
+                let packet_id = msg.data[0];
+                
+                match packet_id {
+                    0 => {
+                        // AUTHENTICATE packet
+                        info!("   🔐 Authentication request received (packet size: {} bytes)", msg.data.len());
+                        info!("   📤 Sending CLIENT_AUTHENTICATED response...");
+                        // Send CLIENT_AUTHENTICATED response (packet ID 1) in a spawned task
+                        let auth_response = vec![1u8]; // CLIENT_AUTHENTICATED
+                        let dc_send = dc_clone.clone();
+                        tokio::spawn(async move {
+                            match dc_send.send(&auth_response.into()).await {
+                                Ok(_) => {
+                                    info!("   ✅ Successfully sent CLIENT_AUTHENTICATED response (1 byte)");
+                                }
+                                Err(e) => {
+                                    error!("   ❌ Failed to send authentication response: {}", e);
+                                }
+                            }
+                        });
+                    }
+                    0xFF if msg.data.len() == 2 && msg.data[1] == 0xFF => {
+                        info!("   ✅ Keepalive packet received!");
+                    }
+                    _ => {
+                        if msg.data.len() <= 100 {
+                            info!("   Data (hex): {:02x?}", msg.data);
+                        } else {
+                            info!("   Data (hex, first 100 bytes): {:02x?}...", &msg.data[..100.min(msg.data.len())]);
+                        }
+                    }
+                }
             }
-        } else {
-            info!("   Data (hex, first 100 bytes): {:02x?}...", &msg.data[..100.min(msg.data.len())]);
-        }
-        Box::pin(async {})
-    }));
+            
+            Box::pin(async {})
+        }));
 
-    let dc_label_close = dc_label.clone();
-    data_channel.on_close(Box::new(move || {
-        info!("🔌 Data channel closed: '{}' (ID: {})", dc_label_close, dc_id);
+        let dc_label_close = label.clone();
+        let dc_id_close = dc_id;
+        data_channel.on_close(Box::new(move || {
+            info!("🔌 Data channel closed: '{}' (ID: {})", dc_label_close, dc_id_close);
+            Box::pin(async {})
+        }));
+        
         Box::pin(async {})
     }));
 

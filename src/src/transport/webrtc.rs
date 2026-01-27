@@ -470,9 +470,14 @@ impl WebRTCClientTransport {
 
         let pc_state = self.peer_connection.get_connection_state();
         let channel_state = self.data_channel.get_ready_state();
+        let was_connected = self.connected;
         self.connected = pc_state == ConnectionState::CONNECTED
             && channel_state == ChannelState::OPEN
             && self.signaling_complete;
+        
+        if !was_connected && self.connected {
+            godot_print!("[WebRTC] Connection established! pc_state: {:?}, channel_state: {:?}, signaling_complete: {}", pc_state, channel_state, self.signaling_complete);
+        }
     }
 
     fn is_channel_ready(&self) -> bool {
@@ -502,8 +507,12 @@ impl ClientTransport for WebRTCClientTransport {
         let mut events = Vec::new();
         while self.data_channel.get_available_packet_count() > 0 {
             let packet = self.data_channel.get_packet();
+            let packet_data = packet.to_vec();
+            if !packet_data.is_empty() {
+                godot_print!("[WebRTC] Received packet: {} bytes, first byte: 0x{:02x}", packet_data.len(), packet_data[0]);
+            }
             events.push(ClientEvent::PacketReceived {
-                data: packet.to_vec(),
+                data: packet_data,
                 channel: Channel::Reliable,
             });
         }

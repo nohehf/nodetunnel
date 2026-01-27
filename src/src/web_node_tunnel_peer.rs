@@ -177,8 +177,11 @@ impl WebNodeTunnelPeer {
     fn handle_relay_event(&mut self, event: RelayEvent) {
         match event {
             RelayEvent::ConnectedToServer => {
+                godot_print!("[WebNodeTunnelPeer] ConnectedToServer event received, sending auth request");
                 match self.relay_client.req_auth(self.app_id.clone()) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        godot_print!("[WebNodeTunnelPeer] Auth request sent successfully");
+                    }
                     Err(e) => {
                         godot_error!("[WebNodeTunnelPeer] Failed to authenticate: {}", e);
                         self.signals().error().emit(e.to_string());
@@ -186,6 +189,7 @@ impl WebNodeTunnelPeer {
                 }
             }
             RelayEvent::Authenticated => {
+                godot_print!("[WebNodeTunnelPeer] Authenticated event received, emitting signal");
                 self.signals().authenticated().emit();
             }
             RelayEvent::RoomsReceived { rooms } => {
