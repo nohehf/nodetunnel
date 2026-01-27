@@ -63,9 +63,33 @@ impl SignalNode {
     #[func]
     fn _on_session_description_created(&mut self, type_: GString, sdp: GString) {
         godot_print!("[WebRTC] Signal fired: {} - {}", type_, sdp);
-        // Call the offer callback directly to set it in the transport (avoids binding conflicts)
+        // Store the offer data and use call_deferred to call the callback
+        // This avoids binding conflicts - we'll call the callback after the signal handler finishes
+        let type_var = type_.to_variant();
+        let sdp_var = sdp.to_variant();
+        
         if self.offer_callback.is_valid() {
-            let _ = self.offer_callback.call(&[type_.to_variant(), sdp.to_variant()]);
+            // Use call_deferred to call our wrapper method, which will then call the callback
+            // This breaks the binding chain
+            let call_deferred_name = godot::builtin::StringName::from("call_deferred");
+            let wrapper_name = godot::builtin::StringName::from("_call_offer_callback");
+            let _ = self.base_mut().call(
+                &call_deferred_name,
+                &[
+                    wrapper_name.to_variant(),
+                    type_var,
+                    sdp_var,
+                ],
+            );
+        }
+    }
+
+    /// Wrapper to call offer callback - used with call_deferred to avoid binding conflicts
+    #[func]
+    fn _call_offer_callback(&mut self, type_: Variant, sdp: Variant) {
+        // Now we can safely call the callback since we're in a deferred call
+        if self.offer_callback.is_valid() {
+            let _ = self.offer_callback.call(&[type_, sdp]);
         }
     }
 
@@ -208,9 +232,10 @@ impl WebRTCClientTransport {
     /// Handle session description created - called from signal node callback
     pub fn handle_session_description(&mut self, type_: GString, sdp: GString) {
         if self.signaling_complete {
+            godot_print!("[WebRTC] Ignoring offer - signaling already complete");
             return;
         }
-        godot_print!("[WebRTC] Got offer from signal: {}", type_);
+        godot_print!("[WebRTC] Got offer from signal: {} (sdp length: {})", type_, sdp.len());
         self.pending_offer = Some(SdpDescription { type_, sdp });
     }
 
@@ -235,13 +260,16 @@ impl WebRTCClientTransport {
     fn process_signaling(&mut self) -> Result<(), TransportError> {
         // Step 1: If we have a pending offer, set local description and send to server
         if let Some(offer) = self.pending_offer.take() {
-            godot_print!("[WebRTC] Setting local description and sending offer");
+            godot_print!("[WebRTC] Processing offer: setting local description");
             match self
                 .peer_connection
                 .set_local_description(&offer.type_, &offer.sdp)
             {
                 Error::OK => {
-                    self.send_offer_to_server(&offer)?;
+                    godot_print!("[WebRTC] Local description set successfully, sending offer to server");
+                    // Store offer temporarily since send_offer_to_server needs a reference
+                    let offer_clone = offer.clone();
+                    self.send_offer_to_server(&offer_clone)?;
                 }
                 err => {
                     return Err(TransportError::Other(format!(
@@ -316,7 +344,12 @@ impl WebRTCClientTransport {
                 }
             }
             Status::DISCONNECTED => {
-                godot_print!("[WebRTC] HTTP client status: DISCONNECTED");
+                // If we have a pending request body but client is disconnected, initiate connection
+                if self.pending_request_body.is_some() && self.pending_offer.is_none() {
+                    // We have a request body but no active connection - this shouldn't happen
+                    // unless connect_to_host() failed or was never called
+                    godot_print!("[WebRTC] HTTP client DISCONNECTED with pending request body - connection may have failed");
+                }
             }
             _ => {
                 godot_print!("[WebRTC] HTTP client status: {:?}", status);
@@ -352,15 +385,26 @@ impl WebRTCClientTransport {
 
         godot_print!("[WebRTC] Initiating connection to: {} (port: {}, https: {})", host_with_port, port, is_https);
         
+        // Check current status before connecting
+        let status_before = self.http_client.get_status();
+        godot_print!("[WebRTC] HTTP client status before connect: {:?}", status_before);
+        
+        // If already connected or connecting, close first
+        if status_before != Status::DISCONNECTED {
+            godot_print!("[WebRTC] Closing existing connection before reconnecting");
+            self.http_client.close();
+        }
+        
         // Connect to host (HttpClient handles HTTPS/TLS automatically)
         // Note: For HTTPS, HttpClient will handle TLS handshake after connection
         match self.http_client.connect_to_host(&host_with_port) {
             Error::OK => {
                 let initial_status = self.http_client.get_status();
                 godot_print!("[WebRTC] connect_to_host() succeeded, initial status: {:?}", initial_status);
-                // Status will be RESOLVING or CONNECTING - we need to poll to progress
+                // Status should be RESOLVING or CONNECTING - we need to poll to progress
             }
             err => {
+                godot_print!("[WebRTC] connect_to_host() failed: {:?}", err);
                 return Err(TransportError::Other(format!("Failed to connect: {:?}", err)));
             }
         }

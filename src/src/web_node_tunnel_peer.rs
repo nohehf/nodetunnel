@@ -65,7 +65,7 @@ impl WebNodeTunnelPeer {
         self.poll();
     }
 
-    /// Handle WebRTC session description - called from signal node to avoid binding conflicts
+    /// Handle WebRTC session description - called from signal node (via call_deferred) to avoid binding conflicts
     #[func]
     fn _handle_session_description(&mut self, type_: GString, sdp: GString) {
         if let Some(transport) = self.relay_client.transport_mut() {
