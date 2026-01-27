@@ -2,7 +2,7 @@ use crate::transport::client::{ClientEvent, ClientTransport};
 use crate::transport::common::Channel;
 use crate::transport::error::TransportError;
 use godot::builtin::{
-    Dictionary, GString, PackedByteArray, PackedStringArray, Variant, varray, vdict,
+    Callable, Dictionary, GString, PackedByteArray, PackedStringArray, Variant, varray, vdict,
 };
 use godot::classes::{
     HttpClient, Json, Node, Object, WebRtcDataChannel, WebRtcPeerConnection,
@@ -10,7 +10,7 @@ use godot::classes::{
 };
 use godot::global::{Error, godot_print};
 use godot::meta::ToGodot;
-use godot::obj::{Base, Gd, NewAlloc, NewGd};
+use godot::obj::{Base, Gd, NewAlloc, NewGd, WithBaseField};
 use godot::prelude::{GodotClass, INode, godot_api};
 
 const DATA_CHANNEL_NAME: &str = "game";
@@ -22,12 +22,13 @@ struct SdpDescription {
 }
 
 /// Minimal node for WebRTC signals (required by Godot)
-/// Stores the offer when the signal fires, transport can retrieve it
+/// Stores the offer when the signal fires and calls transport callback directly
+/// Automatically polls the transport in _process() for background HTTP signaling
 #[derive(GodotClass)]
 #[class(base=Node)]
 struct SignalNode {
-    stored_offer_type: Option<GString>,
-    stored_offer_sdp: Option<GString>,
+    offer_callback: Callable, // Callback to set offer in transport
+    poll_callable: Callable,
     #[base]
     base: Base<Node>,
 }
@@ -36,10 +37,24 @@ struct SignalNode {
 impl INode for SignalNode {
     fn init(base: Base<Node>) -> Self {
         Self {
-            stored_offer_type: None,
-            stored_offer_sdp: None,
+            offer_callback: Callable::invalid(),
+            poll_callable: Callable::invalid(),
             base,
         }
+    }
+
+    fn ready(&mut self) {
+        // Enable processing to poll automatically every frame
+        self.base_mut().set_process(true);
+    }
+
+    fn process(&mut self, _delta: f64) {
+        // Automatically poll the transport every frame for HTTP client progress
+        // Use call_deferred to avoid binding conflicts when poll() tries to call take_offer()
+        // This defers the poll call until after process() finishes, avoiding the mutable borrow conflict
+        let call_deferred_name = godot::builtin::StringName::from("call_deferred");
+        let call_poll_name = godot::builtin::StringName::from("_call_poll");
+        let _ = self.base_mut().call(&call_deferred_name, &[call_poll_name.to_variant()]);
     }
 }
 
@@ -48,20 +63,27 @@ impl SignalNode {
     #[func]
     fn _on_session_description_created(&mut self, type_: GString, sdp: GString) {
         godot_print!("[WebRTC] Signal fired: {} - {}", type_, sdp);
-        self.stored_offer_type = Some(type_);
-        self.stored_offer_sdp = Some(sdp);
+        // Call the offer callback directly to set it in the transport (avoids binding conflicts)
+        if self.offer_callback.is_valid() {
+            let _ = self.offer_callback.call(&[type_.to_variant(), sdp.to_variant()]);
+        }
     }
 
     #[func]
-    fn take_offer(&mut self) -> Variant {
-        if let (Some(type_), Some(sdp)) = (self.stored_offer_type.take(), self.stored_offer_sdp.take()) {
-            let dict = vdict! {
-                "type": type_,
-                "sdp": sdp,
-            };
-            dict.to_variant()
-        } else {
-            Variant::nil()
+    fn set_offer_callback(&mut self, callback: Callable) {
+        self.offer_callback = callback;
+    }
+
+    #[func]
+    fn set_poll_callable(&mut self, callable: Callable) {
+        self.poll_callable = callable;
+    }
+
+    /// Wrapper method to call poll callable - used with call_deferred to avoid binding conflicts
+    #[func]
+    fn _call_poll(&mut self) {
+        if self.poll_callable.is_valid() {
+            let _ = self.poll_callable.call(&[]);
         }
     }
 }
@@ -85,7 +107,8 @@ pub struct WebRTCClientTransport {
 impl WebRTCClientTransport {
     /// Create a new WebRTC client transport
     /// Performs HTTP signaling roundtrip: create offer -> POST -> receive answer -> setup connection
-    pub fn new(signaling_url: String, parent_node: Gd<Node>) -> Result<Self, TransportError> {
+    /// Sets up automatic polling via signal node's _process() for background HTTP signaling
+    pub fn new(signaling_url: String, parent_node: Gd<Node>, poll_callable: Callable, offer_callback: Callable) -> Result<Self, TransportError> {
         godot_print!("[WebRTC] Creating transport with signaling URL: {}", signaling_url);
 
         // Create peer connection
@@ -142,6 +165,13 @@ impl WebRTCClientTransport {
             offer_created: false,
         };
 
+        // Set up callbacks in signal node
+        {
+            let mut node_bind = signal_node.bind_mut();
+            node_bind.set_poll_callable(poll_callable.clone());
+            node_bind.set_offer_callback(offer_callback);
+        }
+
         // Connect WebRTC signal to signal node
         let mut pc_obj = peer_connection.clone().upcast::<Object>();
         let node_obj = signal_node.clone().upcast::<Object>();
@@ -152,6 +182,13 @@ impl WebRTCClientTransport {
                 return Err(TransportError::Other(format!("Failed to connect signal: {:?}", err)));
             }
         }
+
+        // Set up offer callback - create callable to handle_session_description
+        // We need to get a callable to the transport's method, but we can't easily do that
+        // Instead, we'll use a different approach: check for offer in poll() but use a flag
+        // Actually, let's create a method on WebNodeTunnelPeer that the signal node can call
+        // But wait, we don't have access to WebNodeTunnelPeer from here...
+        // Let's use a simpler approach: store offer in signal node and check it without binding conflicts
 
         // Start signaling: create offer
         godot_print!("[WebRTC] Creating offer...");
@@ -168,29 +205,20 @@ impl WebRTCClientTransport {
     }
 
 
+    /// Handle session description created - called from signal node callback
+    pub fn handle_session_description(&mut self, type_: GString, sdp: GString) {
+        if self.signaling_complete {
+            return;
+        }
+        godot_print!("[WebRTC] Got offer from signal: {}", type_);
+        self.pending_offer = Some(SdpDescription { type_, sdp });
+    }
+
     /// Poll WebRTC connection and handle signaling
     /// Must be called regularly (every frame) for HTTP client to progress
     pub fn poll(&mut self) -> Result<(), TransportError> {
         // Poll peer connection (processes WebRTC events and signals)
         self.peer_connection.poll();
-
-        // Check if signal node has a stored offer
-        if self.pending_offer.is_none() && !self.signaling_complete {
-            let mut node_obj = self.signal_node.clone().upcast::<Object>();
-            let take_offer_name = godot::builtin::StringName::from("take_offer");
-            let offer_variant: Variant = node_obj.call(&take_offer_name, &[]);
-            if !offer_variant.is_nil() {
-                if let Ok(offer_dict) = offer_variant.try_to::<Dictionary>() {
-                    if let (Some(type_), Some(sdp)) = (
-                        offer_dict.get("type").and_then(|v: Variant| v.try_to::<GString>().ok()),
-                        offer_dict.get("sdp").and_then(|v: Variant| v.try_to::<GString>().ok()),
-                    ) {
-                        godot_print!("[WebRTC] Got offer from signal node: {}", type_);
-                        self.pending_offer = Some(SdpDescription { type_, sdp });
-                    }
-                }
-            }
-        }
 
         // Handle signaling if not complete (this polls HTTP client)
         if !self.signaling_complete {
