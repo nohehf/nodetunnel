@@ -2,7 +2,7 @@ use crate::transport::client::{ClientEvent, ClientTransport};
 use crate::transport::common::Channel;
 use crate::transport::error::TransportError;
 use godot::builtin::{
-    Callable, Dictionary, GString, PackedByteArray, PackedStringArray, Variant, varray, vdict,
+    Callable, Dictionary, GString, PackedByteArray, PackedStringArray, StringName, Variant, varray, vdict,
 };
 use godot::classes::{
     HttpClient, Json, Node, Object, WebRtcDataChannel, WebRtcPeerConnection,
@@ -298,20 +298,23 @@ impl WebRTCClientTransport {
                 godot_print!("[WebRTC] HTTP client status: CONNECTED");
                 // Send request if we have pending request body
                 if let Some(body) = self.pending_request_body.take() {
-                    godot_print!("[WebRTC] Sending offer to signaling server (body size: {} bytes)", body.len());
+                    godot_print!("[WebRTC] Sending request (body size: {} bytes)", body.len());
                     let mut headers = PackedStringArray::new();
                     headers.push("Content-Type: application/json");
-                    // Use request_raw with full URL (works for both HTTP and HTTPS)
-                    match self.http_client.request_raw(Method::POST, &self.signaling_url, &headers, &body) {
+                    
+                    // Parse URL to get path (when connected, use path not full URL)
+                    let (_host, _port, path) = Self::parse_url(&self.signaling_url)?;
+                    
+                    // Use request_raw with path (not full URL) since we're already connected
+                    match self.http_client.request_raw(Method::POST, &path, &headers, &body) {
                         Error::OK => {
                             godot_print!("[WebRTC] HTTP POST request sent successfully");
                         }
                         err => {
+                            godot_print!("[WebRTC] request_raw() failed: {:?}", err);
                             return Err(TransportError::Other(format!("Failed to send request: {:?}", err)));
                         }
                     }
-                } else {
-                    godot_print!("[WebRTC] HTTP client connected but no pending request body");
                 }
             }
             Status::REQUESTING => {
@@ -344,12 +347,15 @@ impl WebRTCClientTransport {
                 }
             }
             Status::DISCONNECTED => {
-                // If we have a pending request body but client is disconnected, initiate connection
-                if self.pending_request_body.is_some() && self.pending_offer.is_none() {
-                    // We have a request body but no active connection - this shouldn't happen
-                    // unless connect_to_host() failed or was never called
-                    godot_print!("[WebRTC] HTTP client DISCONNECTED with pending request body - connection may have failed");
-                }
+                // Request was sent, just waiting for connection/response
+            }
+            Status::CANT_RESOLVE => {
+                godot_print!("[WebRTC] HTTP client status: CANT_RESOLVE - DNS resolution failed");
+                return Err(TransportError::Other("DNS resolution failed".to_string()));
+            }
+            Status::CANT_CONNECT => {
+                godot_print!("[WebRTC] HTTP client status: CANT_CONNECT - connection failed");
+                return Err(TransportError::Other("Connection failed".to_string()));
             }
             _ => {
                 godot_print!("[WebRTC] HTTP client status: {:?}", status);
@@ -369,21 +375,10 @@ impl WebRTCClientTransport {
         let json_str = Json::stringify(&offer_dict.to_variant());
         let json_bytes = PackedByteArray::from(json_str.to_string().as_bytes());
 
-        // Store request body - we'll send it when HTTP client is ready
-        self.pending_request_body = Some(json_bytes);
+        godot_print!("[WebRTC] Sending offer to signaling server: {} (body size: {} bytes)", self.signaling_url, json_bytes.len());
         
-        // Parse URL to get host for connection
-        let (host, port, _path) = Self::parse_url(&self.signaling_url)?;
-        let is_https = self.signaling_url.starts_with("https://");
-        
-        // For HttpClient, we connect to host:port, then use request_raw with full URL
-        let host_with_port = if port == 80 || port == 443 {
-            host.clone()
-        } else {
-            format!("{}:{}", host, port)
-        };
-
-        godot_print!("[WebRTC] Initiating connection to: {} (port: {}, https: {})", host_with_port, port, is_https);
+        // Parse URL to get host, port, and path
+        let (host, port, path) = Self::parse_url(&self.signaling_url)?;
         
         // Check current status before connecting
         let status_before = self.http_client.get_status();
@@ -391,22 +386,28 @@ impl WebRTCClientTransport {
         
         // If already connected or connecting, close first
         if status_before != Status::DISCONNECTED {
-            godot_print!("[WebRTC] Closing existing connection before reconnecting");
+            godot_print!("[WebRTC] Closing existing connection before new request");
             self.http_client.close();
         }
         
-        // Connect to host (HttpClient handles HTTPS/TLS automatically)
-        // Note: For HTTPS, HttpClient will handle TLS handshake after connection
-        match self.http_client.connect_to_host(&host_with_port) {
-            Error::OK => {
-                let initial_status = self.http_client.get_status();
-                godot_print!("[WebRTC] connect_to_host() succeeded, initial status: {:?}", initial_status);
-                // Status should be RESOLVING or CONNECTING - we need to poll to progress
-            }
-            err => {
-                godot_print!("[WebRTC] connect_to_host() failed: {:?}", err);
-                return Err(TransportError::Other(format!("Failed to connect: {:?}", err)));
-            }
+        // Store request body - we'll send it when connected
+        self.pending_request_body = Some(json_bytes);
+        
+        // Connect to host with the specified port
+        // Rust bindings don't expose port parameter, so use call() to access full API
+        godot_print!("[WebRTC] Connecting to host: {} port: {}", host, port);
+        let mut http_obj = self.http_client.clone().upcast::<Object>();
+        let connect_name = StringName::from("connect_to_host");
+        let host_var = host.to_variant();
+        let port_var = port.to_variant();
+        
+        let result = http_obj.call(&connect_name, &[host_var, port_var]);
+        let err = result.try_to::<Error>().unwrap_or(Error::FAILED);
+        if err == Error::OK {
+            godot_print!("[WebRTC] connect_to_host() succeeded");
+        } else {
+            godot_print!("[WebRTC] connect_to_host() failed: {:?}", err);
+            return Err(TransportError::Other(format!("Failed to connect: {:?}", err)));
         }
 
         Ok(())
