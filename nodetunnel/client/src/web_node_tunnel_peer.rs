@@ -5,10 +5,10 @@ use crate::transport::webrtc::WebRTCClientTransport;
 use godot::builtin::{Array, Callable, Dictionary, GString, PackedByteArray, Variant};
 use godot::classes::multiplayer_peer::{ConnectionStatus, TransferMode};
 use godot::classes::{IMultiplayerPeerExtension, MultiplayerPeerExtension, Node};
-use godot::global::{Error, godot_error, godot_print, godot_warn};
+use godot::global::{godot_error, godot_print, godot_warn, Error};
 use godot::meta::ToGodot;
 use godot::obj::{Base, Gd, NewAlloc, WithUserSignals};
-use godot::prelude::{GodotClass, godot_api};
+use godot::prelude::{godot_api, GodotClass};
 use std::time::{Duration, Instant};
 
 struct GamePacket {
@@ -105,7 +105,11 @@ impl WebNodeTunnelPeer {
         };
 
         // Create WebRTC transport (polling happens automatically via Godot's multiplayer system)
-        let transport = match WebRTCClientTransport::new(relay_address, signal_node.clone(), self.offer_callback.clone()) {
+        let transport = match WebRTCClientTransport::new(
+            relay_address,
+            signal_node.clone(),
+            self.offer_callback.clone(),
+        ) {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[WebNodeTunnelPeer] Failed to create transport: {}", e);
@@ -177,7 +181,9 @@ impl WebNodeTunnelPeer {
     fn handle_relay_event(&mut self, event: RelayEvent) {
         match event {
             RelayEvent::ConnectedToServer => {
-                godot_print!("[WebNodeTunnelPeer] ConnectedToServer event received, sending auth request");
+                godot_print!(
+                    "[WebNodeTunnelPeer] ConnectedToServer event received, sending auth request"
+                );
                 match self.relay_client.req_auth(self.app_id.clone()) {
                     Ok(_) => {
                         godot_print!("[WebNodeTunnelPeer] Auth request sent successfully");
@@ -270,7 +276,11 @@ impl WebNodeTunnelPeer {
                 error_code,
                 error_message,
             } => {
-                godot_error!("[WebNodeTunnelPeer] Relay error {}: {}", error_code, error_message);
+                godot_error!(
+                    "[WebNodeTunnelPeer] Relay error {}: {}",
+                    error_code,
+                    error_message
+                );
                 self.signals().error().emit(error_message);
             }
         }
@@ -280,11 +290,12 @@ impl WebNodeTunnelPeer {
 #[godot_api]
 impl IMultiplayerPeerExtension for WebNodeTunnelPeer {
     fn init(base: Base<Self::Base>) -> Self {
+        godot_warn!("Warning: WebNodeTunnelPeer is experimental, and may not work as expected. If you are not targeting web platforms, use NodeTunnelPeer instead.");
         // Create callable during init (when to_init_gd() is available)
         let self_gd = base.to_init_gd();
         let self_obj = self_gd.upcast::<godot::classes::Object>();
         let offer_callback = self_obj.callable("_handle_session_description");
-        
+
         Self {
             app_id: "".to_string(),
             room_id: "".to_godot(),

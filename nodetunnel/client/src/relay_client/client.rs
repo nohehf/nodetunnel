@@ -14,13 +14,13 @@ enum ClientState {
     Authenticated,
 }
 
-pub struct RelayClient {
-    transport: Option<ClientTransport>,
+pub struct RelayClient<T: ClientTransport> {
+    transport: Option<T>,
     client_state: ClientState,
     last_update: Duration,
 }
 
-impl RelayClient {
+impl<T: ClientTransport> RelayClient<T> {
     pub fn new() -> Self {
         Self {
             transport: None,
@@ -29,9 +29,14 @@ impl RelayClient {
         }
     }
 
-    pub fn connect(&mut self, transport: ClientTransport) {
+    pub fn connect(&mut self, transport: T) {
         self.client_state = ClientState::Connecting;
         self.transport = Some(transport);
+    }
+
+    /// Get mutable reference to transport (for WebRTC-specific operations)
+    pub fn transport_mut(&mut self) -> Option<&mut T> {
+        self.transport.as_mut()
     }
 
     pub fn update(&mut self, delta: Duration) -> Result<Vec<RelayEvent>, RelayClientError> {
@@ -42,11 +47,15 @@ impl RelayClient {
 
         self.last_update += delta;
         if self.last_update >= Duration::from_secs(5) {
-            transport.send_keepalive().expect("TODO: panic message");
+            transport
+                .send_keepalive()
+                .map_err(RelayClientError::SendPacketError)?;
             self.last_update = Duration::ZERO;
         }
 
-        let events = transport.recv_packets();
+        let events = transport
+            .recv()
+            .map_err(RelayClientError::SendPacketError)?;
 
         let mut relay_events = vec![];
 
@@ -54,18 +63,17 @@ impl RelayClient {
             relay_events.push(event);
         }
 
-        for event in events {
-            if let ClientEvent::PacketReceived { data, channel } = event {
-                let packet_events = self.handle_packet(data, channel)?;
-                relay_events.extend(packet_events);
-            }
+        for ClientEvent::PacketReceived { data, channel } in events {
+            let packet_events = self.handle_packet(data, channel)?;
+            relay_events.extend(packet_events);
         }
 
         Ok(relay_events)
     }
 
     fn update_state(&mut self) -> Option<RelayEvent> {
-        if self.client_state == ClientState::Connecting && self.is_connected() {
+        let connected = self.is_connected();
+        if self.client_state == ClientState::Connecting && connected {
             self.client_state = ClientState::Connected;
             return Some(RelayEvent::ConnectedToServer);
         }
@@ -225,7 +233,7 @@ impl RelayClient {
     pub fn is_connected(&self) -> bool {
         self.transport
             .as_ref()
-            .is_some_and(super::super::transport::client::ClientTransport::is_connected)
+            .is_some_and(|transport| transport.is_connected())
     }
 
     fn send_packet(
@@ -240,7 +248,7 @@ impl RelayClient {
 
         transport
             .send(packet_type.to_bytes(), channel)
-            .expect("TODO: panic message");
+            .map_err(RelayClientError::SendPacketError)?;
 
         Ok(())
     }

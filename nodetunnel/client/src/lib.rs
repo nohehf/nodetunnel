@@ -1,6 +1,7 @@
 mod node_tunnel_peer;
 mod relay_client;
 mod transport;
+mod web_node_tunnel_peer;
 
 use godot::prelude::*;
 

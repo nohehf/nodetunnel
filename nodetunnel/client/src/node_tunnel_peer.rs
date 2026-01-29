@@ -1,7 +1,7 @@
 use crate::relay_client::client::RelayClient;
 use crate::relay_client::events::RelayEvent;
-use crate::transport::client::ClientTransport;
 use crate::transport::common::Channel;
+use crate::transport::udp::UDPClientTransport;
 use godot::builtin::{Array, Callable, Dictionary, GString, PackedByteArray, Variant};
 use godot::classes::multiplayer_peer::{ConnectionStatus, TransferMode};
 use godot::classes::{IMultiplayerPeerExtension, MultiplayerPeerExtension};
@@ -31,7 +31,7 @@ struct NodeTunnelPeer {
     target_peer: i32,
     transfer_mode: TransferMode,
     incoming_packets: Vec<GamePacket>,
-    relay_client: RelayClient,
+    relay_client: RelayClient<UDPClientTransport>,
     outgoing_queue: Vec<(i32, Vec<u8>, Channel)>,
     last_poll_time: Option<Instant>,
     base: Base<MultiplayerPeerExtension>,
@@ -80,7 +80,7 @@ impl NodeTunnelPeer {
             }
         };
 
-        let transport = match ClientTransport::new(socket_addr) {
+        let transport = match UDPClientTransport::new(socket_addr) {
             Ok(t) => t,
             Err(e) => {
                 godot_error!("[NodeTunnel] Failed to create transport: {}", e);
