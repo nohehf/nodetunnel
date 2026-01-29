@@ -1,5 +1,1 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Channel {
-    Reliable,
-    Unreliable,
-}
+pub use nodetunnel_core::transport::channel::Channel;

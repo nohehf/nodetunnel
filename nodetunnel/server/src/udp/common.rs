@@ -1,8 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransferChannel {
-    Reliable,
-    Unreliable,
-}
+pub use nodetunnel_core::transport::channel::Channel as TransferChannel;
 
 #[derive(Debug, Clone)]
 pub enum ServerEvent {
