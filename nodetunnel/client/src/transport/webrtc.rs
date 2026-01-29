@@ -124,7 +124,7 @@ impl WebRTCClientTransport {
         {
             Error::OK => {}
             err => {
-                return Err(TransportError::Other(format!(
+                return Err(TransportError::from(format!(
                     "Failed to initialize WebRTC peer connection: {:?}",
                     err
                 )));
