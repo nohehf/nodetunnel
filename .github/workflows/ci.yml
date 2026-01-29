@@ -27,8 +27,8 @@ jobs:
           components: rustfmt
       
       - name: Format code
-        run: cargo fmt
-        working-directory: src
+        run: cargo fmt --all
+        working-directory: nodetunnel
       
       - name: Commit formatting changes
         run: |
@@ -67,18 +67,18 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            src/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            nodetunnel/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('nodetunnel/**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
       
       - name: Build dependencies
-        run: cargo build --all-targets
-        working-directory: src
+        run: cargo build --all-targets --workspace
+        working-directory: nodetunnel
       
       - name: Run Clippy with auto-fixes
-        run: cargo clippy --fix --allow-dirty --allow-staged --all-targets -- -W clippy::all -W clippy::pedantic
-        working-directory: src
+        run: cargo clippy --fix --allow-dirty --allow-staged --all-targets --workspace -- -W clippy::all -W clippy::pedantic
+        working-directory: nodetunnel
         continue-on-error: true
       
       - name: Commit Clippy auto-fixes
@@ -92,5 +92,5 @@ jobs:
           fi
       
       - name: Check for remaining lint issues
-        run: cargo clippy --all-targets -- -W clippy::all -W clippy::pedantic
-        working-directory: src
+        run: cargo clippy --all-targets --workspace -- -W clippy::all -W clippy::pedantic
+        working-directory: nodetunnel
