@@ -1,15 +1,15 @@
 use crate::config::loader::Config;
 use crate::relay::apps::Apps;
 use crate::relay::clients::{ClientState, Clients};
-use crate::transport::server::TransportRegistry;
 use crate::udp::common::TransferChannel;
+use crate::udp::paper_interface::PaperInterface;
 use nodetunnel_core::protocol::packet::PacketType;
 use reqwest::StatusCode;
 use std::error::Error;
 use tracing::warn;
 
 pub struct AuthHandler<'a> {
-    transport: &'a mut TransportRegistry,
+    transport: &'a mut PaperInterface,
     http: &'a reqwest::Client,
     clients: &'a mut Clients,
     apps: &'a mut Apps,
@@ -18,7 +18,7 @@ pub struct AuthHandler<'a> {
 
 impl<'a> AuthHandler<'a> {
     pub fn new(
-        transport: &'a mut TransportRegistry,
+        transport: &'a mut PaperInterface,
         http: &'a reqwest::Client,
         clients: &'a mut Clients,
         apps: &'a mut Apps,

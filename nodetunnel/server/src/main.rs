@@ -14,9 +14,7 @@ use tracing_subscriber::FmtSubscriber;
 
 mod config;
 mod relay;
-mod transport;
 mod udp;
-mod webrtc;
 
 fn get_log_level() -> tracing::Level {
     let log_level_str = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "debug".to_string());
@@ -53,25 +51,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let transport = PaperInterface::new(addr).await?;
 
-    let http_addr: SocketAddr = config
-        .http_bind_address
-        .to_socket_addrs()?
-        .next()
-        .ok_or("Failed to resolve HTTP host name")?;
-
     let mut server = RelayServer::new(transport, config);
-
     info!("relay server started");
     info!("UDP server listening on {}", addr);
-    info!("HTTP server will listen on {}", http_addr);
     info!("To connect via UDP, use address: {}", addr);
-    info!(
-        "To connect via WebRTC, send HTTP POST to http://{}/signaling",
-        http_addr
-    );
-
     tokio::select! {
-        res = server.0.run() => {
+        res = server.run() => {
             if let Err(e) = res {
                 error!("server error: {}", e);
             }
@@ -82,7 +67,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     info!("shutting down server");
-    server.0.cleanup().await;
+    server.cleanup().await;
 
     Ok(())
 }

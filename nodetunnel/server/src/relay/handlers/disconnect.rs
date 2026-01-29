@@ -1,8 +1,8 @@
 use crate::relay::apps::Apps;
 use crate::relay::clients::{ClientState, Clients};
 use crate::relay::handlers::room::RoomHandler;
-use crate::transport::server::TransportRegistry;
 use crate::udp::common::TransferChannel;
+use crate::udp::paper_interface::PaperInterface;
 use nodetunnel_core::protocol::packet::PacketType;
 use tracing::{info, warn};
 
@@ -13,14 +13,14 @@ struct DisconnectInfo {
 }
 
 pub struct DisconnectHandler<'a> {
-    transport: &'a mut TransportRegistry,
+    transport: &'a mut PaperInterface,
     clients: &'a mut Clients,
     apps: &'a mut Apps,
 }
 
 impl<'a> DisconnectHandler<'a> {
     pub fn new(
-        transport: &'a mut TransportRegistry,
+        transport: &'a mut PaperInterface,
         clients: &'a mut Clients,
         apps: &'a mut Apps,
     ) -> Self {

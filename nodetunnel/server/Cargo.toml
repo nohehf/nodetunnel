@@ -20,9 +20,3 @@ tracing-subscriber = "0.3.22"
 reqwest = { version = "0.12.25", features = ["json"] }
 envy = "0.4.2"
 dotenvy = "0.15.7"
-webrtc = "0.14"
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-serde_json = "1.0"
-anyhow = "1.0"

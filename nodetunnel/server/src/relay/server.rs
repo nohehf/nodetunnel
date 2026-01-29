@@ -5,26 +5,15 @@ use crate::relay::handlers::auth::AuthHandler;
 use crate::relay::handlers::disconnect::DisconnectHandler;
 use crate::relay::handlers::game_data::GameDataHandler;
 use crate::relay::handlers::room::RoomHandler;
-use crate::transport::server::TransportRegistry;
 use crate::udp::common::{ServerEvent, TransferChannel};
 use crate::udp::paper_interface::PaperInterface;
-use crate::webrtc::signaling::handle_signaling;
-use crate::webrtc::webrtc_interface::WebRTCInterface;
-use axum::{routing::post, Router};
 use nodetunnel_core::protocol::packet::PacketType;
 use std::error::Error;
-use std::net::{SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use tower::ServiceBuilder;
-use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 pub struct RelayServer {
-    transport: TransportRegistry,
-    webrtc: Arc<WebRTCInterface>,
-    webrtc_event_rx: mpsc::UnboundedReceiver<ServerEvent>,
+    udp: PaperInterface,
     http_client: reqwest::Client,
 
     config: Config,
@@ -33,61 +22,18 @@ pub struct RelayServer {
 }
 
 impl RelayServer {
-    pub fn new(udp_transport: PaperInterface, config: Config) -> (Self, Arc<WebRTCInterface>) {
-        let (webrtc_event_tx, webrtc_event_rx) = mpsc::unbounded_channel();
-        let webrtc = Arc::new(WebRTCInterface::new(webrtc_event_tx));
-
-        let transport = TransportRegistry::new(udp_transport);
-
-        let server = Self {
-            transport,
-            webrtc: webrtc.clone(),
-            webrtc_event_rx,
+    pub fn new(transport: PaperInterface, config: Config) -> Self {
+        Self {
+            udp: transport,
             http_client: reqwest::Client::new(),
             config,
             apps: Apps::new(),
             clients: Clients::new(),
-        };
-
-        (server, webrtc)
+        }
     }
 
     /// Starts the server loop.
     pub async fn run(&mut self) -> Result<(), Box<dyn Error>> {
-        // Start HTTP server for WebRTC signaling
-        let http_addr: SocketAddr = self
-            .config
-            .http_bind_address
-            .to_socket_addrs()?
-            .next()
-            .ok_or("Failed to resolve HTTP host name")?;
-
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any);
-
-        let app = Router::new()
-            .route("/signaling", post(handle_signaling))
-            .layer(ServiceBuilder::new().layer(cors))
-            .with_state(self.webrtc.clone());
-
-        let listener = tokio::net::TcpListener::bind(&http_addr).await?;
-
-        let span = tracing::span!(tracing::Level::INFO, "http", context = "server");
-        let _enter = span.enter();
-        info!("Server listening on {}", http_addr);
-
-        // Spawn HTTP server as a background task
-        tokio::spawn(async move {
-            let server = axum::serve(listener, app);
-            if let Err(e) = server.await {
-                let span = tracing::span!(tracing::Level::ERROR, "http", context = "server");
-                let _enter = span.enter();
-                error!("Server error: {}", e);
-            }
-        });
-
         // TODO: remove magic numbers
         let mut cleanup = tokio::time::interval(Duration::from_secs(1));
         // TODO: remove magic numbers
@@ -98,67 +44,38 @@ impl RelayServer {
 
         loop {
             tokio::select! {
-                result = self.transport.udp_mut().recv_events() => {
+                result = self.udp.recv_events() => {
                     let events = result?;
                     for event in events {
-                        self.handle_event(event, true).await; // true = UDP
-                    }
-                }
-
-                event = self.webrtc_event_rx.recv() => {
-                    if let Some(event) = event {
-                        self.handle_event(event, false).await; // false = WebRTC
+                        self.handle_event(event).await;
                     }
                 }
 
                 _ = cleanup.tick() => {
                     // TODO: remove magic numbers
-                    for client_id in self.transport.udp_mut().connection_manager.cleanup_sessions(Duration::from_secs(5)) {
-                        self.handle_event(ServerEvent::ClientDisconnected { client_id }, true).await;
+                    for client_id in self.udp.connection_manager.cleanup_sessions(Duration::from_secs(5)) {
+                        self.handle_event(ServerEvent::ClientDisconnected { client_id }).await;
                     }
                 }
 
                 _ = resend.tick() => {
                     // TODO: remove magic numbers
-                    self.transport.udp_mut().do_resends(Duration::from_millis(100)).await;
+                    self.udp.do_resends(Duration::from_millis(100)).await;
                 }
             }
         }
-
-        Ok(())
     }
 
-    /// Handles an event from either UDP or WebRTC layer.
-    async fn handle_event(&mut self, event: ServerEvent, is_udp: bool) {
+    /// Handles an event from the UDP layer.
+    async fn handle_event(&mut self, event: ServerEvent) {
         match event {
             ServerEvent::ClientConnected { client_id } => {
-                let transport_type = if is_udp { "UDP" } else { "WebRTC" };
-                let span = tracing::span!(
-                    tracing::Level::INFO,
-                    "transport",
-                    transport = transport_type
-                );
-                let _enter = span.enter();
-                info!("Client connected: {}", client_id);
+                info!("client connected: {}", client_id);
                 self.clients.create(client_id);
-                // Register transport based on connection type
-                if is_udp {
-                    self.transport.register_udp_client(client_id);
-                } else {
-                    self.transport
-                        .register_webrtc_client(client_id, self.webrtc.clone());
-                }
             }
             ServerEvent::ClientDisconnected { client_id } => {
-                let transport_type = if is_udp { "UDP" } else { "WebRTC" };
-                let span = tracing::span!(
-                    tracing::Level::INFO,
-                    "transport",
-                    transport = transport_type
-                );
-                let _enter = span.enter();
-                info!("Client disconnected: {}", client_id);
-                DisconnectHandler::new(&mut self.transport, &mut self.clients, &mut self.apps)
+                info!("client disconnected: {}", client_id);
+                DisconnectHandler::new(&mut self.udp, &mut self.clients, &mut self.apps)
                     .handle_disconnect(client_id)
                     .await;
             }
@@ -223,7 +140,7 @@ impl RelayServer {
                     from_client_id, app_id, version
                 );
                 AuthHandler::new(
-                    &mut self.transport,
+                    &mut self.udp,
                     &self.http_client,
                     &mut self.clients,
                     &mut self.apps,
@@ -249,7 +166,7 @@ impl RelayServer {
         client_app_id: u64,
         packet: &PacketType,
     ) {
-        let mut rh = RoomHandler::new(&mut self.transport, &mut self.apps, &mut self.clients);
+        let mut rh = RoomHandler::new(&mut self.udp, &mut self.apps, &mut self.clients);
 
         match packet {
             PacketType::CreateRoom {
@@ -303,7 +220,7 @@ impl RelayServer {
                     "client {} updating room {} with metadata: {}",
                     from_client_id, client_room_id, metadata
                 );
-                RoomHandler::new(&mut self.transport, &mut self.apps, &mut self.clients)
+                RoomHandler::new(&mut self.udp, &mut self.apps, &mut self.clients)
                     .update_room(from_client_id, client_app_id, client_room_id, metadata)
                     .await;
             }
@@ -316,7 +233,7 @@ impl RelayServer {
                     "client {} responding to join request for target {} (allowed: {})",
                     from_client_id, target_id, allowed
                 );
-                RoomHandler::new(&mut self.transport, &mut self.apps, &mut self.clients)
+                RoomHandler::new(&mut self.udp, &mut self.apps, &mut self.clients)
                     .recv_join_res(client_app_id, *target_id, client_room_id, allowed)
                     .await;
             }
@@ -328,7 +245,7 @@ impl RelayServer {
                     from_peer,
                     data.len()
                 );
-                GameDataHandler::new(&mut self.transport, &mut self.apps)
+                GameDataHandler::new(&mut self.udp, &mut self.apps)
                     .route_game_data(
                         from_client_id,
                         client_app_id,
@@ -364,13 +281,13 @@ impl RelayServer {
 
         info!("disconnecting {} peers", disconnects.len());
 
-        let mut dh = DisconnectHandler::new(&mut self.transport, &mut self.clients, &mut self.apps);
+        let mut dh = DisconnectHandler::new(&mut self.udp, &mut self.clients, &mut self.apps);
 
         for id in disconnects {
             dh.force_disconnect(id).await;
         }
 
-        let mut rh = RoomHandler::new(&mut self.transport, &mut self.apps, &mut self.clients);
+        let mut rh = RoomHandler::new(&mut self.udp, &mut self.apps, &mut self.clients);
 
         for (app_id, room_id) in to_remove {
             rh.remove_room(app_id, room_id);

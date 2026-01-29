@@ -17,7 +17,7 @@ pub enum ClientState {
 
 /// Stores data about a client.
 /// See: `ClientState`
-/// Note: Transport is stored separately in TransportRegistry, not here
+/// Note: Transport is handled separately via PaperInterface, not here
 #[derive(Default)]
 pub struct Client {
     pub state: ClientState,

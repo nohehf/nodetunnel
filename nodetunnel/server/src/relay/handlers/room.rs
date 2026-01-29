@@ -1,19 +1,19 @@
 use crate::relay::apps::Apps;
 use crate::relay::clients::{ClientState, Clients};
-use crate::transport::server::TransportRegistry;
 use crate::udp::common::TransferChannel;
+use crate::udp::paper_interface::PaperInterface;
 use nodetunnel_core::protocol::packet::{PacketType, RoomInfo};
 use tracing::{info, warn};
 
 pub struct RoomHandler<'a> {
-    transport: &'a mut TransportRegistry,
+    transport: &'a mut PaperInterface,
     apps: &'a mut Apps,
     clients: &'a mut Clients,
 }
 
 impl<'a> RoomHandler<'a> {
     pub fn new(
-        transport: &'a mut TransportRegistry,
+        transport: &'a mut PaperInterface,
         apps: &'a mut Apps,
         clients: &'a mut Clients,
     ) -> Self {

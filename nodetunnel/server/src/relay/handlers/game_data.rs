@@ -1,16 +1,16 @@
 use crate::relay::apps::Apps;
-use crate::transport::server::TransportRegistry;
 use crate::udp::common::TransferChannel;
+use crate::udp::paper_interface::PaperInterface;
 use nodetunnel_core::protocol::packet::PacketType;
 use tracing::warn;
 
 pub struct GameDataHandler<'a> {
-    transport: &'a mut TransportRegistry,
+    transport: &'a mut PaperInterface,
     apps: &'a mut Apps,
 }
 
 impl<'a> GameDataHandler<'a> {
-    pub fn new(transport: &'a mut TransportRegistry, apps: &'a mut Apps) -> Self {
+    pub fn new(transport: &'a mut PaperInterface, apps: &'a mut Apps) -> Self {
         Self { transport, apps }
     }
 
