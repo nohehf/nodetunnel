@@ -1,0 +1,28 @@
+[package]
+name = "nodetunnel-server"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "relay-server"
+path = "src/main.rs"
+
+[dependencies]
+nodetunnel-core = { path = "../core" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.9.8"
+thiserror = "2.0.17"
+rand = "0.9.2"
+paperudp = { git = "https://github.com/curtjs/paperudp.git" }
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
+reqwest = { version = "0.12.25", features = ["json"] }
+envy = "0.4.2"
+dotenvy = "0.15.7"
+webrtc = "0.14"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+serde_json = "1.0"
+anyhow = "1.0"

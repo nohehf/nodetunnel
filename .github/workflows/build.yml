@@ -23,13 +23,13 @@ jobs:
       
       - name: Build Linux
         run: cargo build --release --target x86_64-unknown-linux-gnu
-        working-directory: src
+        working-directory: nodetunnel/client
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: linux-binary
-          path: src/target/x86_64-unknown-linux-gnu/release/libnodetunnel.so
+          path: nodetunnel/client/target/x86_64-unknown-linux-gnu/release/libnodetunnel.so
 
   build-windows:
     runs-on: windows-latest
@@ -42,13 +42,13 @@ jobs:
       
       - name: Build Windows
         run: cargo build --release --target x86_64-pc-windows-msvc
-        working-directory: src
+        working-directory: nodetunnel/client
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-binary
-          path: src/target/x86_64-pc-windows-msvc/release/nodetunnel.dll
+          path: nodetunnel/client/target/x86_64-pc-windows-msvc/release/nodetunnel.dll
 
   build-macos:
     runs-on: macos-latest
@@ -61,11 +61,11 @@ jobs:
       
       - name: Build macOS x86_64
         run: cargo build --release --target x86_64-apple-darwin
-        working-directory: src
+        working-directory: nodetunnel/client
       
       - name: Build macOS ARM64
         run: cargo build --release --target aarch64-apple-darwin
-        working-directory: src
+        working-directory: nodetunnel/client
       
       - name: Create Universal Binary
         run: |
@@ -73,13 +73,13 @@ jobs:
             target/x86_64-apple-darwin/release/libnodetunnel.dylib \
             target/aarch64-apple-darwin/release/libnodetunnel.dylib \
             -output libnodetunnel.dylib
-        working-directory: src
+        working-directory: nodetunnel/client
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: macos-binary
-          path: src/libnodetunnel.dylib
+          path: nodetunnel/client/libnodetunnel.dylib
 
   package:
     needs: [build-linux, build-windows, build-macos]
