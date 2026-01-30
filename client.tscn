@@ -1,0 +1,146 @@
+[gd_scene load_steps=2 format=3 uid="uid://client_scene"]
+
+[ext_resource type="Script" path="res://client.gd" id="1_client"]
+
+[node name="Client" type="Control"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1024.0
+offset_bottom = 600.0
+size_flags_horizontal = 3
+size_flags_vertical = 3
+script = ExtResource("1_client")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 8.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = -8.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 4
+
+[node name="NameContainer" type="HBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="NameLabel" type="Label" parent="VBoxContainer/NameContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 16
+text = "Client Name"
+
+[node name="RemoveButton" type="Button" parent="VBoxContainer/NameContainer"]
+layout_mode = 2
+text = "Remove"
+
+[node name="TransportLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Transport: UDP"
+
+[node name="StatusLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Status: Disconnected"
+
+[node name="RoomContainer" type="HBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="RoomLabel" type="Label" parent="VBoxContainer/RoomContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 14
+text = "Room: None"
+
+[node name="CopyRoomButton" type="Button" parent="VBoxContainer/RoomContainer"]
+layout_mode = 2
+disabled = true
+text = "Copy Room ID"
+
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ConnectButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Connect"
+
+[node name="DisconnectButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "Disconnect"
+
+[node name="HSeparator2" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="HostButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "Host Room"
+
+[node name="JoinButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "Join Room"
+
+[node name="LeaveButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "Leave Room"
+
+[node name="HSeparator3" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="RoomIdInput" type="LineEdit" parent="VBoxContainer"]
+layout_mode = 2
+placeholder_text = "Enter Room ID"
+
+[node name="RefreshRoomsButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+disabled = true
+text = "Refresh Rooms"
+
+[node name="RoomList" type="ItemList" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HSeparator4" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ChatLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 14
+text = "Chat"
+
+[node name="ChatLog" type="TextEdit" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+editable = false
+
+[node name="ChatInputContainer" type="HBoxContainer" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ChatInput" type="LineEdit" parent="VBoxContainer/ChatInputContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Type a message..."
+
+[node name="SendButton" type="Button" parent="VBoxContainer/ChatInputContainer"]
+layout_mode = 2
+disabled = true
+text = "Send"
+
+[connection signal="pressed" from="VBoxContainer/ConnectButton" to="." method="_on_connect_pressed"]
+[connection signal="pressed" from="VBoxContainer/DisconnectButton" to="." method="_on_disconnect_pressed"]
+[connection signal="pressed" from="VBoxContainer/HostButton" to="." method="_on_host_pressed"]
+[connection signal="pressed" from="VBoxContainer/JoinButton" to="." method="_on_join_pressed"]
+[connection signal="pressed" from="VBoxContainer/LeaveButton" to="." method="_on_leave_pressed"]
+[connection signal="pressed" from="VBoxContainer/RefreshRoomsButton" to="." method="_on_refresh_rooms_pressed"]
+[connection signal="item_selected" from="VBoxContainer/RoomList" to="." method="_on_room_selected"]
+[connection signal="pressed" from="VBoxContainer/RoomContainer/CopyRoomButton" to="." method="_on_copy_room_pressed"]
+[connection signal="pressed" from="VBoxContainer/ChatInputContainer/SendButton" to="." method="_on_send_pressed"]
+[connection signal="text_submitted" from="VBoxContainer/ChatInputContainer/ChatInput" to="." method="_on_chat_text_submitted"]
+[connection signal="pressed" from="VBoxContainer/NameContainer/RemoveButton" to="." method="_on_remove_pressed"]

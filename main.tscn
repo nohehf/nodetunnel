@@ -1,6 +1,70 @@
 [gd_scene load_steps=2 format=3 uid="uid://dlvwkv4g0wx7u"]
 
-[ext_resource type="Script" uid="uid://cf7hjpbatedj7" path="res://main.gd" id="1_ig7tw"]
+[ext_resource type="Script" uid="uid://cf7hjpbatedj7" path="res://main.gd" id="1_main"]
 
-[node name="Node" type="Node2D"]
-script = ExtResource("1_ig7tw")
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+layout_mode = 0
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 8
+
+[node name="TitleLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "NodeTunnel Multi-Client Demo"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ConfigLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Configuration"
+
+[node name="TransportOption" type="OptionButton" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="RelayAddressInput" type="LineEdit" parent="VBoxContainer"]
+layout_mode = 2
+placeholder_text = "UDP Relay Address (e.g., localhost:8080)"
+
+[node name="WebRTCSignalingInput" type="LineEdit" parent="VBoxContainer"]
+layout_mode = 2
+placeholder_text = "WebRTC Signaling URL (e.g., http://0.0.0.0:8081/signaling)"
+
+[node name="AppIdInput" type="LineEdit" parent="VBoxContainer"]
+layout_mode = 2
+placeholder_text = "App ID"
+
+[node name="AddClientButton" type="Button" parent="VBoxContainer"]
+layout_mode = 2
+text = "Add Client"
+
+[node name="HSeparator2" type="HSeparator" parent="VBoxContainer"]
+layout_mode = 2
+
+[node name="ClientsLabel" type="Label" parent="VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Clients"
+
+[node name="Clients" type="GridContainer" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+columns = 2
+theme_override_constants/h_separation = 8
+theme_override_constants/v_separation = 8
+
+[connection signal="pressed" from="VBoxContainer/AddClientButton" to="." method="_on_add_client_pressed"]
