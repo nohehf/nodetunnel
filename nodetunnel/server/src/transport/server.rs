@@ -43,11 +43,22 @@ impl TransportRegistry {
         data: Vec<u8>,
         channel: TransferChannel,
     ) -> Result<(), std::io::Error> {
+        use tracing::{debug, warn};
+        
+        debug!(
+            "TransportRegistry::send() called for client_id={}, data_size={} bytes, registered_transports={}",
+            client_id,
+            data.len(),
+            self.transports.len()
+        );
+        
         match self.transports.get(&client_id) {
             Some(ClientTransport::Udp) => {
+                debug!("Routing packet to UDP transport for client {}", client_id);
                 Transport::send(&mut self.udp, client_id, data, channel).await
             }
             Some(ClientTransport::WebRTC(webrtc)) => {
+                debug!("Routing packet to WebRTC transport for client {}", client_id);
                 // WebRTC is wrapped in Arc, so we can't get &mut self
                 // Since WebRTC's send implementation uses &self internally (via Arc),
                 // we call it directly. The trait is still implemented for consistency.
@@ -62,6 +73,11 @@ impl TransportRegistry {
                 .await
             }
             None => {
+                warn!(
+                    "Client {} not found in transport registry, defaulting to UDP. Registered clients: {:?}",
+                    client_id,
+                    self.transports.keys().collect::<Vec<_>>()
+                );
                 // Default to UDP if not registered (backward compatibility)
                 Transport::send(&mut self.udp, client_id, data, channel).await
             }
@@ -70,21 +86,34 @@ impl TransportRegistry {
 
     /// Remove a client's transport
     pub fn remove_client(&mut self, client_id: &u64) {
+        use tracing::info;
+        info!("TransportRegistry::remove_client() called for client_id={}", client_id);
         match self.transports.remove(client_id) {
             Some(ClientTransport::WebRTC(webrtc)) => {
+                info!("Removing WebRTC client {}", client_id);
                 // WebRTC uses Arc, so we call the method directly
                 webrtc.remove_client(client_id);
             }
-            Some(ClientTransport::Udp) | None => {
+            Some(ClientTransport::Udp) => {
+                info!("Removing UDP client {}", client_id);
                 // UDP removal handled by interface
                 Transport::remove_client(&mut self.udp, client_id);
             }
+            None => {
+                info!("Client {} not found in transport registry (already removed?)", client_id);
+            }
         }
+        info!("TransportRegistry now has {} registered clients", self.transports.len());
     }
 
     /// Get mutable reference to UDP interface (for UDP-specific operations)
     pub fn udp_mut(&mut self) -> &mut PaperInterface {
         &mut self.udp
+    }
+
+    /// Check if a client is registered in the transport registry
+    pub fn is_client_registered(&self, client_id: &u64) -> bool {
+        self.transports.contains_key(client_id)
     }
 
     /// Get WebRTC interface (for WebRTC-specific operations)

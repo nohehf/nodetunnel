@@ -139,15 +139,21 @@ impl RelayServer {
                     transport = transport_type
                 );
                 let _enter = span.enter();
-                info!("Client connected: {}", client_id);
+                info!(
+                    "Client connected: {} (transport: {})",
+                    client_id, transport_type
+                );
                 self.clients.create(client_id);
                 // Register transport based on connection type
                 if is_udp {
+                    info!("Registering client {} with UDP transport", client_id);
                     self.transport.register_udp_client(client_id);
                 } else {
+                    info!("Registering client {} with WebRTC transport", client_id);
                     self.transport
                         .register_webrtc_client(client_id, self.webrtc.clone());
                 }
+                info!("Client {} registration complete", client_id);
             }
             ServerEvent::ClientDisconnected { client_id } => {
                 let transport_type = if is_udp { "UDP" } else { "WebRTC" };

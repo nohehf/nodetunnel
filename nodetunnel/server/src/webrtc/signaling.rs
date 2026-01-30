@@ -98,6 +98,12 @@ pub async fn handle_signaling(
 
             // Register the data channel with the WebRTC interface
             let webrtc_for_register = webrtc_clone.clone();
+            use webrtc::data_channel::data_channel_state::RTCDataChannelState;
+            let channel_state = data_channel.ready_state();
+            info!(
+                "Data channel '{}' (ID: {}) state before registration: {:?}",
+                label, dc_id, channel_state
+            );
             webrtc_for_register.register_data_channel(dc_id, data_channel.clone());
 
             let dc_label_open = label.clone();
@@ -110,11 +116,13 @@ pub async fn handle_signaling(
 
             let dc_label_msg = label.clone();
             let webrtc_for_msg = webrtc_clone.clone();
+            let data_channel_for_msg = data_channel.clone();
             data_channel.on_message(Box::new(move |msg: DataChannelMessage| {
                 let span = tracing::span!(tracing::Level::TRACE, "transport", transport = "WebRTC");
                 let _enter = span.enter();
                 let webrtc_clone = webrtc_for_msg.clone();
                 let label = dc_label_msg.clone();
+                let dc = data_channel_for_msg.clone();
 
                 trace!(
                     "Message received on data channel '{}': {} bytes",
@@ -122,8 +130,8 @@ pub async fn handle_signaling(
                     msg.data.len()
                 );
 
-                // Forward the message to the WebRTC interface
-                webrtc_clone.handle_data_channel_message(dc_id, msg.data.to_vec());
+                // Forward the message to the WebRTC interface with the data channel Arc
+                webrtc_clone.handle_data_channel_message(dc, msg.data.to_vec());
 
                 Box::pin(async {})
             }));
@@ -133,7 +141,7 @@ pub async fn handle_signaling(
             data_channel.on_close(Box::new(move || {
                 let span = tracing::span!(tracing::Level::INFO, "transport", transport = "WebRTC");
                 let _enter = span.enter();
-                info!("Data channel closed: '{}' (ID: {})", dc_label_close, dc_id);
+                warn!("Data channel closed: '{}' (ID: {})", dc_label_close, dc_id);
                 webrtc_for_close.unregister_data_channel(dc_id);
                 Box::pin(async {})
             }));

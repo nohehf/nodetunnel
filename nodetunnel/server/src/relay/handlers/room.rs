@@ -130,6 +130,16 @@ impl<'a> RoomHandler<'a> {
             room.get_host()
         };
 
+        // Check if host is still connected before trying to send
+        if !self.transport.is_client_registered(&host_id) {
+            warn!(
+                "Cannot send join request to host {} - host is not connected (disconnected?)",
+                host_id
+            );
+            self.send_err(sender_id, "Room host is no longer connected").await;
+            return;
+        }
+
         self.send_packet(
             host_id,
             &PacketType::PeerJoinAttempt {
@@ -195,12 +205,22 @@ impl<'a> RoomHandler<'a> {
     }
 
     async fn send_packet(&mut self, target: u64, packet: &PacketType, channel: TransferChannel) {
+        use tracing::debug;
+        let packet_bytes = packet.to_bytes();
+        debug!(
+            "RoomHandler::send_packet() - sending {:?} to client {} ({} bytes)",
+            packet,
+            target,
+            packet_bytes.len()
+        );
         if let Err(e) = self
             .transport
-            .send(target, packet.to_bytes(), channel)
+            .send(target, packet_bytes, channel)
             .await
         {
-            warn!("failed to send packet: {}", e);
+            warn!("failed to send packet to client {}: {}", target, e);
+        } else {
+            debug!("Successfully sent packet to client {}", target);
         }
     }
 

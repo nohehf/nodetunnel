@@ -32,7 +32,13 @@ impl<'a> DisconnectHandler<'a> {
     }
 
     pub async fn handle_disconnect(&mut self, client_id: u64) {
-        let Some(client) = self.clients.remove(client_id) else {
+        let client = self.clients.remove(client_id);
+
+        // Always remove from transport registry, even if client wasn't in clients registry
+        info!("Removing client {} from transport registry", client_id);
+        self.transport.remove_client(&client_id);
+
+        let Some(client) = client else {
             warn!("unregistered client disconnected");
             return;
         };
@@ -124,12 +130,14 @@ impl<'a> DisconnectHandler<'a> {
     }
 
     pub async fn force_disconnect(&mut self, target_client: u64) {
+        info!("Force disconnecting client {}", target_client);
         self.send_packet(
             target_client,
             &PacketType::ForceDisconnect,
             TransferChannel::Reliable,
         )
         .await;
+        // Note: remove_client is already called in handle_disconnect, but calling it here too is safe
         self.transport.remove_client(&target_client);
     }
 

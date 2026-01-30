@@ -56,29 +56,39 @@ func _ready() -> void:
 	
 	# Setup chat
 	chat_log.editable = false
-	chat_input.editable = false  # Will be enabled when in a room
+	chat_input.editable = false # Will be enabled when in a room
 	# Note: Signal connections for buttons are handled in the scene file (client.tscn)
 	
 	# Connect multiplayer signals (will be set up after peer is connected)
 
 func _on_connect_pressed() -> void:
+	print("[%s] Connect button pressed" % client_name)
 	if connected_to_relay:
+		print("[%s] Already connected, ignoring connect request" % client_name)
 		return
 	
 	status_label.text = "Status: Connecting..."
 	
 	match transport_type:
 		TransportType.UDP:
+			print("[%s] Creating UDP peer (NodeTunnelPeer)" % client_name)
 			peer = NodeTunnelPeer.new()
+			print("[%s] Connecting to relay: %s with app_id: %s" % [client_name, relay_address, app_id])
 			var error = peer.connect_to_relay(relay_address, app_id)
+			print("[%s] connect_to_relay() returned: %s" % [client_name, error])
 			if error != OK:
 				status_label.text = "Status: Connection Failed"
+				print("[%s] ERROR: Connection failed with error code %s" % [client_name, error])
 				return
 		TransportType.WEBRTC:
+			print("[%s] Creating WebRTC peer (WebNodeTunnelPeer)" % client_name)
 			peer = WebNodeTunnelPeer.new()
+			print("[%s] Connecting to relay: %s with app_id: %s" % [client_name, webrtc_signaling, app_id])
 			var error = peer.connect_to_relay(webrtc_signaling, app_id)
+			print("[%s] connect_to_relay() returned: %s" % [client_name, error])
 			if error != OK:
 				status_label.text = "Status: Connection Failed"
+				print("[%s] ERROR: Connection failed with error code %s" % [client_name, error])
 				return
 	
 	# Connect peer signals
@@ -152,21 +162,33 @@ func _on_host_pressed() -> void:
 	status_label.text = "Status: Creating room..."
 
 func _on_join_pressed() -> void:
-	if not peer or not connected_to_relay:
+	print("[%s] Join button pressed" % client_name)
+	if not peer:
+		print("[%s] ERROR: peer is null" % client_name)
+		return
+	if not connected_to_relay:
+		print("[%s] ERROR: not connected to relay (connected_to_relay=%s)" % [client_name, connected_to_relay])
 		return
 	
 	var room_id = room_id_input.text.strip_edges()
 	if room_id.is_empty():
 		status_label.text = "Status: Please enter a room ID"
+		print("[%s] ERROR: room_id is empty" % client_name)
 		return
 	
 	var metadata = "Joining as " + client_name
+	print("[%s] Calling peer.join_room(room_id='%s', metadata='%s')" % [client_name, room_id, metadata])
+	print("[%s] Peer type: %s" % [client_name, peer.get_class()])
+	print("[%s] Connection status: %s" % [client_name, peer.get_connection_status()])
 	var error = peer.join_room(room_id, metadata)
+	print("[%s] peer.join_room() returned: %s" % [client_name, error])
 	if error != OK:
 		status_label.text = "Status: Failed to join room"
+		print("[%s] ERROR: join_room failed with error code %s" % [client_name, error])
 		return
 	
 	status_label.text = "Status: Joining room..."
+	print("[%s] Join room request sent successfully" % client_name)
 
 func _on_leave_pressed() -> void:
 	if not peer or not connected_to_relay:
@@ -197,23 +219,29 @@ func _on_room_selected(index: int) -> void:
 		room_id_input.text = parts[1]
 
 func _on_authenticated() -> void:
+	print("[%s] Authenticated signal received" % client_name)
 	connected_to_relay = true
 	status_label.text = "Status: Connected"
 	update_button_states()
 	client_connected.emit(client_name)
+	print("[%s] Now connected to relay, ready for room operations" % client_name)
 
 func _on_error(error_message: String) -> void:
 	status_label.text = "Status: Error - " + error_message
 	print("[%s] Error: %s" % [client_name, error_message])
 
 func _on_room_connected() -> void:
+	print("[%s] Room connected signal received" % client_name)
 	if peer:
 		current_room_id = peer.room_id
+		print("[%s] Joined room: %s" % [client_name, current_room_id])
 		room_label.text = "Room: " + current_room_id
 		status_label.text = "Status: In Room"
 		update_button_states()
 		add_chat_message("System", "Joined room: " + current_room_id)
 		room_joined.emit(current_room_id)
+	else:
+		print("[%s] ERROR: peer is null in _on_room_connected()" % client_name)
 
 func _on_forced_disconnect() -> void:
 	status_label.text = "Status: Forced Disconnect"
